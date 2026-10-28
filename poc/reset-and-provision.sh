@@ -69,13 +69,17 @@ $DC exec -T backend bench --site id.localhost execute frappe.db.set_single_value
 # Mots de passe simples (demande de Bastien ; POC local uniquement)
 $DC exec -T backend bench --site crm.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":"password_minimum_score","value":0}' >/dev/null && echo "password_minimum_score crm : 0"
 $DC exec -T backend bench --site id.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":"password_minimum_score","value":0}' >/dev/null && echo "password_minimum_score id : 0"
-# Controle anti-pollution : DefaultValue setup_complete doit etre ABSENT
+# Controle anti-pollution : DefaultValue setup_complete doit etre ABSENT,
+# et desktop:home_page doit valoir workspace (ce que pose la fin du wizard
+# amont, setup_wizard.py:410 — sinon le desk boucle sur setup-wizard)
 POLL=$($DC exec -T backend bench --site crm.localhost execute frappe.db.get_all --kwargs '{"doctype":"DefaultValue","filters":{"defkey":"setup_complete"},"fields":["name"]}')
 if [ "$POLL" = "[]" ] || [ -z "$POLL" ]; then echo "DefaultValue setup_complete : propre"; else
   echo "pollution detectee, suppression..."
   $DC exec -T backend bench --site crm.localhost execute frappe.db.delete --args '["DefaultValue", {"defkey": "setup_complete", "parent": "__default"}]' >/dev/null
   $DC exec -T backend bench --site id.localhost execute frappe.db.delete --args '["DefaultValue", {"defkey": "setup_complete", "parent": "__default"}]' >/dev/null
 fi
+$DC exec -T backend bench --site crm.localhost execute frappe.db.set_default --args '["desktop:home_page","workspace"]' >/dev/null && echo "desktop:home_page = workspace (crm)"
+$DC exec -T backend bench --site id.localhost execute frappe.db.set_default --args '["desktop:home_page","workspace"]' >/dev/null && echo "desktop:home_page = workspace (id)"
 $DC exec -T backend bench --site crm.localhost execute frappe.clear_cache >/dev/null
 $DC exec -T backend bench --site id.localhost execute frappe.clear_cache >/dev/null
 

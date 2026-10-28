@@ -200,3 +200,24 @@ Pieges : le substring "server {" matche AUSSI "upstream socketio-server {"
 compose dans la meme commande (utiliser docker exec direct) ; docker cp
 vers /etc/nginx cree un fichier que l'entrypoint ne peut plus ecrire
 (crash-loop, reparer par --force-recreate).
+
+## Cause racine FINALE de la boucle desk (28/10, soiree 3, verifie code amont)
+
+Ce n'est PAS une regression de notre part : mecanisme amont latent. A
+l'installation fraiche, frappe/utils/install.py:48-49 pose
+desktop:home_page = "setup-wizard" ; la bascule vers "workspace" n'arrive
+que SI quelqu'un TERMINE l'assistant (setup_wizard.py:410, patch v13
+reset_corrupt_defaults.py : workspace si setup_complete sinon
+setup-wizard). Notre provisioning par script cree les comptes sans
+terminer l'assistant : home_page reste setup-wizard, et comme nos
+marqueurs disent setup_complete, l'assistant se renvoie vers /apps ->
+301 -> /desk -> home_page = setup-wizard -> boucle. Le HAR de Bastien
+(84 Mo) l'a prouve : boot.home_page = "setup-wizard" + boot.setup_complete
+= true dans la MEME page. Correctif aligne sur l'amont :
+frappe.db.set_default("desktop:home_page", "workspace") sur les deux
+sites (valeur exacte du wizard complete). Verifie : boot.home_page =
+"desktop", login 200, desk 200. L'en-tete Clear-Site-Data a ete RETIRE
+(inutile une fois la cause serveur corrige ; retour au conf amont pur).
+Le script de provisionnement pose desormais le defaut workspace apres
+les installs. Dernier piege : le substring "server {" matche aussi
+"upstream socketio-server {" (template nginx).
