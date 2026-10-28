@@ -235,3 +235,20 @@ Projects User, Employee). Le script de provisionnement integre desormais
 la liste complete. Lecon lastarter_core : pour un compte « tout voir »,
 attribuer les roles metier User+Manager de chaque app, System Manager ne
 suffit pas ; verifier par frappe.has_permission(doctype, user=...).
+
+## Emails : envoi demontre, client Mail = suite (28/10, soiree 5)
+
+- frappe/mail est ARCHIVE (absorbe par frappe/suite, comme Meet) : le
+  client mail complet de la suite attendra Suite (0.0.1, WIP).
+- L'envoi et la reception d'emails sont NATIFS (doctype Email Account,
+  SMTP + IMAP) : rien a installer. Demo posee : conteneur Mailpit dans le
+  compose (UI http://localhost:8025, SMTP 1025) + Email Account « Demo
+  Mailpit » (smtp mailpit:1025, default_outgoing). Email de test envoye :
+  Email Queue -> Sent, message visible dans Mailpit. L'Email Account
+  exige une imap_folder (table enfant) si enable_incoming.
+- PIEGE : la build axllent/mailpit:latest du jour n'a PAS d'IMAP (le
+  drapeau --enable-imap est rejete comme unknown alors que l'aide des
+  logs le liste ; 86 lignes d'aide, zero mention IMAP) : la reception
+  de demo attendra une vraie boite (IMAP du client) ou un autre serveur.
+- Le flush de la file (frappe.email.queue.flush) livre immediatement ;
+  sinon les workers prennent l'email a leur rythme.

@@ -237,6 +237,16 @@ services:
       configurator:
         condition: service_completed_successfully
 
+  mailpit:
+    image: axllent/mailpit:latest
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    ports:
+      # UI web : http://localhost:8025 — SMTP : 1025
+      - "8025:8025"
+      - "1025:1025"
+
 volumes:
   db-data:
   redis-queue-data:
