@@ -119,3 +119,20 @@ precedes ; commit de ce constat a suivre.
   meet archive au profit de frappe/suite ; grove recycle en plateforme IA ;
   pilot = gestionnaire de serveurs dedies ; aucune app de page de statut
   dans l'org frappe).
+
+## Donnees de demonstration (28/10, session 2, demande de Bastien)
+
+Semees sur crm.localhost, idempotents, verifiees par comptages :
+- Raven : espace « LaStarter » (membres Administrator/alice/demo), canaux
+  publics lastarter-general et lastarter-support-clients, messages.
+- CRM : 3 leads (Boulangerie Martin, Cooperative Aurore, Cabinet Durand).
+- Helpdesk : 4 tickets de demonstration (sla Standard applique).
+- LMS : cours publie « Prise en main de la suite » + chapitre + lecon.
+- Compte visiteur : demo@example.com / demo-password-1234 (roles Sales
+  User, Agent, Raven User, LMS Student ; existe aussi sur l'IdP avec
+  Desk User pour le SSO). Interface en francais.
+Pieges semis : CRM Lead exige first_name ; en lms 2.63 les doctypes sont
+« Course Chapter »/« Course Lesson » (les noms LMS Chapter/Lesson donnent
+une erreur de module trompeuse) ; Raven ajoute automatiquement le createur
+comme admin de l'espace (membre refuse en doublon = normal) et prefixe les
+canaux avec l'espace (lastarter-general).
