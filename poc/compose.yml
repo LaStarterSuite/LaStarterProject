@@ -1,0 +1,241 @@
+# POC trancheur LaStarter v2 — adapté de frappe/frappe_docker pwd.yml
+# Deux sites sur un bench : id.localhost (identité / IdP OIDC) et
+# crm.localhost (CRM + Helpdesk). Passerelle publiée sur le port hôte 80 :
+# le nginx frappe_docker transmet Host: $host SANS port, donc Frappe dérive
+# toutes ses URLs publiques sans port (redirect_uri OIDC compris) — la
+# passerelle DOIT écouter sur 80 pour que les URLs dérivées soient valides.
+#
+# Prérequis : image lasarter-bench:poc construite depuis poc/apps.json
+# (voir poc/build.sh).
+
+x-default-deploy: &default_deploy
+  restart_policy:
+    condition: on-failure
+
+x-default-volumes: &default_volumes
+  - sites:/home/frappe/frappe-bench/sites
+  - logs:/home/frappe/frappe-bench/logs
+
+services:
+  backend:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    volumes: *default_volumes
+    # L'échange de tokens OIDC (site crm.localhost -> site id.localhost) est
+    # fait côté serveur : glibc ne résout pas *.localhost, on pointe les noms
+    # vers l'hôte (Docker Desktop publie 8081 sur 127.0.0.1).
+    extra_hosts:
+      - "id.localhost:host-gateway"
+      - "crm.localhost:host-gateway"
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      MYSQL_ROOT_PASSWORD: admin
+      MARIADB_ROOT_PASSWORD: admin
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+  configurator:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy:
+      restart_policy:
+        condition: none
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
+      SOCKETIO_PORT: "9000"
+    volumes: *default_volumes
+
+  create-sites:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy:
+      restart_policy:
+        condition: none
+    volumes: *default_volumes
+    entrypoint:
+      - bash
+      - -c
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] && \
+          [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]] && \
+          [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_queue // empty"` ]];
+        do
+          echo "Waiting for sites/common_site_config.json to be created";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then
+            echo "could not find sites/common_site_config.json with required keys";
+            exit 1
+          fi
+        done;
+        echo "sites/common_site_config.json found";
+        if [ ! -d "sites/id.localhost" ]; then
+          bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --set-default id.localhost;
+        else
+          echo "Site id.localhost déjà présent, création ignorée";
+        fi;
+        if [ ! -d "sites/crm.localhost" ]; then
+          bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app crm crm.localhost;
+          bench --site crm.localhost install-app helpdesk;
+        else
+          echo "Site crm.localhost déjà présent, création ignorée";
+        fi;
+
+  db:
+    image: mariadb:11.8
+    networks:
+      - frappe_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy: *default_deploy
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MARIADB_ROOT_PASSWORD: admin
+    volumes:
+      - db-data:/var/lib/mysql
+
+  frontend:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    depends_on:
+      - websocket
+      - backend
+    deploy: *default_deploy
+    command:
+      - nginx-entrypoint.sh
+    environment:
+      BACKEND: backend:8000
+      # Multi-sites : le Host de la requête désigne le site Frappe
+      FRAPPE_SITE_NAME_HEADER: $$host
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    volumes: *default_volumes
+    ports:
+      - "80:8080"
+
+  queue-long:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    command:
+      - bench
+      - worker
+      - --queue
+      - long,default,short
+    volumes: *default_volumes
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+  queue-short:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    command:
+      - bench
+      - worker
+      - --queue
+      - short,default
+    volumes: *default_volumes
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+  redis-queue:
+    image: redis:6.2-alpine
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    volumes:
+      - redis-queue-data:/data
+
+  redis-cache:
+    image: redis:6.2-alpine
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+
+  scheduler:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    command:
+      - bench
+      - schedule
+    volumes: *default_volumes
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+  websocket:
+    image: lasarter-bench:poc
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    volumes: *default_volumes
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:
+  redis-queue-data:
+  sites:
+  logs:
+
+networks:
+  frappe_network:
+    driver: bridge

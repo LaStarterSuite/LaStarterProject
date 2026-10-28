@@ -1,0 +1,1001 @@
+{
+  "summary": "Fouille des dépôts frappe locaux : provisioning, SSO inter-sites, pins, control plane — carte besoin vers source",
+  "agentCount": 5,
+  "logs": [],
+  "result": {
+    "scopes": [
+      {
+        "label": "mine:press",
+        "result": {
+          "findings": [
+            {
+              "topic": "Q1 : création de site - entrée API dashboard",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/api/site.py (fonction _new, ~ligne 168)",
+              "mechanism": "L'API dashboard new() valide l'équipe et les fichiers de restauration éventuels, choisit le Release Group / domaine / cluster, puis cherche le Bench Actif le plus récent du groupe sur les serveurs dont le proxy dessert ce domaine (tri : même cluster d'abord, Server.use_for_new_sites). Elle insère un document Site (subdomain, apps, plan, liens Remote File si restore) et retourne le nom de l'Agent Job créé.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q1 : création de site - hooks d'insertion du Site",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/site.py (after_insert ~1122, create_agent_request ~1292)",
+              "mechanism": "after_insert : crée l'abonnement (plan), l'abonnement marketplace des apps, le document Site Domain, l'enregistrement DNS, puis create_agent_request. Celle-ci appelle agent.new_site(site, create_user=...) (ou new_site_from_backup si Remote File) et, sur le serveur proxy, agent.new_upstream_file pour ajouter le site au fichier upstream nginx.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q1 : création de site - payload envoyé à l'agent",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/agent.py (Agent.new_site ligne 152, create_agent_job ligne 1130)",
+              "mechanism": "new_site construit un payload {name, config, apps (noms d'apps présentes sur le bench), mariadb_root_password, admin_password, managed_database_config, create_user?} et crée un AgentJob (type New Site, chemin benches/{bench}/sites) envoyé en POST https://{server}/agent/... avec bearer = agent_password déchiffré du doc serveur. Déduplication des jobs identiques déjà en cours.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q1 : création de site - exécution réelle côté serveur (bench new-site)",
+              "repo": "agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/agent/agent/bench.py (job New Site ~377, bench_new_site ~203)",
+              "mechanism": "L'agent Flask crée un utilisateur MariaDB temporaire via le mot de passe root, puis exécute dans le conteneur docker du bench : bench new-site --no-mariadb-socket --mariadb-root-username <temp> --mariadb-root-password <temp> --admin-password <pwd> --db-name <db> <site>. Ensuite : install_apps (bench install-app pour chaque app), update_config, enable_scheduler, création d'un user système si demandé (sites SaaS), régénération nginx + reload.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q1 : finalisation asynchrone par callback de job",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/site.py (process_new_site_job_update ligne 5000)",
+              "mechanism": "Le site ne devient Active que quand DEUX jobs (New Site ET Add Site to Upstream côté proxy) sont Success ; Running passe le site en Installing, tout échec le passe Broken, marque creation_failed et désactive l'abonnement. C'est le pattern callback : le status du site est piloté par les jobs, jamais attendu en direct.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q2 : modèle de versionnage d'app (App, AppSource, AppRelease)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/app_source/app_source.py (create_release ~178) et app/app.py (poll_new_releases)",
+              "mechanism": "AppSource = repo GitHub + branche (+ installation id GitHub App). AppRelease = un commit précis d'une source, créé par poll GitHub (job poll_new_releases, 300 sources les plus anciennement synchronisées) ou par webhook push (GitHubWebhookLog.create_app_releases). Le pinning de base est donc un couple (source, hash de commit), jamais une branche flottante au moment du build.",
+              "reusable": "réutilisable tel quel (concept) - on réimplémente le même modèle"
+            },
+            {
+              "topic": "Q2 : épinglage réel au déploiement (create_deploy_candidate / get_apps_to_update)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/release_group/release_group.py (create_deploy_candidate ligne 936, get_apps_to_update ~1000, deploy_information ~1440)",
+              "mechanism": "Le Release Group ne 'met pas à jour des apps' : il crée un DeployCandidate, snapshot immuable {app, source, release, hash}. get_apps_to_update : si une app a une release plus récente (next_release = dernière release non yankée, ou release explicitement choisie), on l'épingle ; sinon on REPREND la release exacte du dernier bench Actif du groupe. Le candidate porte aussi dependencies, packages, variables d'env et un build_token. Version-15 etc. est une validation (validate_app_version), pas le mécanisme de pinning.",
+              "reusable": "réutilisable tel quel (concept central) - c'est LA réponse à l'épinglage strict"
+            },
+            {
+              "topic": "Q2 : build immuable (DeployCandidateBuild) puis déploiement",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/deploy_candidate_build/deploy_candidate_build.py + doctype/deploy/deploy.py (create_benches ligne 51) + doctype/new_bench_queue",
+              "mechanism": "Le DC génère un Dockerfile (version Python, dépendances, packages), liste des build steps (clone git avec clés SSH, build docker par couches, upload vers registre), et lance Agent(build_server).run_build (job Run Remote Builder sur une VM builder). Après build OK : doc Deploy -> create_benches -> NewBenchQueue (file avec limite de concurrence, groupes privés prioritaires) -> création du doc Bench -> agent.new_bench qui tire l'image docker du registre et démarre le conteneur (compose ou service swarm), nginx + supervisor générés par templates.",
+              "reusable": "pattern à imiter, on réécrit (sans le multi-cloud ni arm64 au début)"
+            },
+            {
+              "topic": "Q2 : installation d'une app sur un site existant (marketplace)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/site.py (install_app ligne 1075) + agent.py (install_app_site ligne 335)",
+              "mechanism": "Site.install_app vérifie que l'app marketplace est installable (plan éventuel), puis agent.install_app_site : l'agent fait get-app/install-app dans le conteneur du bench + build des assets + reload ; le callback enregistre l'app sur le site et l'abonnement marketplace. L'app doit déjà être dans l'image du bench ; les releases des groupes publics exigent une approbation marketplace (AppReleaseApprovalRequest, is_yanked exclu de update_available).",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q3 : SSO - le constat clé, pas d'OIDC fédéré",
+              "repo": "press + agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/site.py (get_login_sid ~2488) + agent/agent/site.py (Site.sid ligne 904) + agent/agent/web.py (route /benches/<bench>/sites/<site>/sid)",
+              "mechanism": "Aucun Social Login Key ni client OAuth n'est préconfiguré sur les sites gérés (grep exhaustif social_login/oauth_client/openid dans press et agent : rien côté sites). Le 'connecté partout' de Frappe Cloud est une INJECTION DE SESSION : get_login_sid poste usr/pwd Administrator (mot de passe admin stocké chiffré sur le doc Site) sur https://{site}/api/method/login et récupère le cookie sid ; pour un autre user, l'agent exécute bench console dans le conteneur avec LoginManager.login_as(user) puis parse le sid imprimé ; le dashboard redirige vers https://{site}/app?sid={sid} (login_as_admin/login_as_team/login_as_user).",
+              "reusable": "ignorer pour LaStarter : notre doctrine Frappe=IdP OIDC est justement le mécanisme que press n'a PAS ; le sid-minting est un raccourci opérateur à réserver au support"
+            },
+            {
+              "topic": "Q3 : SSO du dashboard lui-même et flux SaaS inverses",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/api/account.py (get_auth_url ~1097, Social Login Key provider Frappe), api/oauth.py (google_login/callback), api/developer/saas.py (send_verification_code/login_to_fc), doctype/site/site.py (create_sync_user_webhook 2671)",
+              "mechanism": "Le dashboard frappecloud.com se connecte via Social Login Key 'Frappe' (OIDC frappe.io) ou Google OAuth (OAuth Domain Mapping) : c'est du client OIDC pour le dashboard uniquement. Deux flux inverses existent pour les SaaS : (a) les sites poussent leurs users vers press via 3 documents Webhook (User insert/update/trash) vers press.api.site_login.sync_product_site_user authentifiés par x-site-token = saas_communication_secret (stocké aussi en config site fc_communication_secret) ; (b) un user d'un site SaaS peut se connecter AU dashboard par OTP (login_token en cache redis + login_manager.login_as).",
+              "reusable": "pattern à imiter, on réécrit (webhook + secret partagé est utile pour notre synchronisation d'identités)"
+            },
+            {
+              "topic": "Q4 : l'agent, interface unique vers les serveurs",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/agent.py (classe Agent ligne 47, post ~955)",
+              "mechanism": "Toute opération distante passe par Agent : crée un AgentJob (doc persistant avec request_data), POST HTTPS bearer agent_password, routage possible via le proxy, timeouts (10,30), circuit breaker (Agent Request Failure stoppe les appels après échecs répétés), réponse de l'agent persistée dans le job. L'agent distant (repo agent, Flask) transforme chaque job en étapes @job/@step exécutées par docker exec dans les conteneurs.",
+              "reusable": "pattern à imiter, on réécrit - c'est le coeur d'un mini-cloud"
+            },
+            {
+              "topic": "Q4 : protocole de jobs (polling + callbacks)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/agent_job/agent_job.py (poll_pending_jobs ligne 661) + hooks.py scheduler_events",
+              "mechanism": "press interroge chaque serveur toutes les ~5 s (poll_pending_jobs), met à jour AgentJobStep, puis appelle une fonction callback par job_type (process_new_site_job_update, etc.) qui fait évoluer les documents métier. Jobs orphelins marqués Failure (fail_old_jobs), steps rafraîchis hourly. AgentJob/AgentJobStep = table d'audit complète de toutes les opérations d'infrastructure.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Q4 : mise à jour de version d'un site (Site Update)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site_update/site_update.py (start ligne 368, create_update_site_agent_request ~486)",
+              "mechanism": "Migrer un site vers un bench plus récent = Site Update : choix de la stratégie de données (backup logique simple, backup physique mariabackup pour grosses bases, réplication logique pour quasi zéro downtime), désactivation du site, agent.update_site(site, destination_bench, deploy_type, before_migrate_scripts, ...) qui restaure sur le bench destination et migre, réactivation, et tout un arsenal de récupération (restore_tables, trigger_recovery_job, marquage Fatal des updates coincés). Le bench de destination a été construit par le pipeline Q2.",
+              "reusable": "pattern à imiter, on réécrit (commencer par backup logique + activate/désactivate)"
+            },
+            {
+              "topic": "Q4 : sauvegardes et opérations quotidiennes",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/backups.py + hooks.py (scheduler_events ligne 209)",
+              "mechanism": "Deux jobs horaires (schedule_logical_backups_for_sites_with_backup_time / physical) créent des SiteBackup -> agent.backup_site avec upload S3/MinIO ; classes d'expiration locale/offsite ; un doctype backup_restoration_test restaure réellement des backups dans des sites de test quotidiennement. Le reste du quotidien = dizaines de jobs schedulés (sync benches/analytics, TLS, DNS, suspension sites, snapshot VM, purge) qui lisent l'état via l'agent et écrivent dans les doctypes.",
+              "reusable": "pattern à imiter, on réécrit (le restoration-test est un différenciateur de sérieux)"
+            },
+            {
+              "topic": "Q4 : création de bench en flux (NewBenchQueue)",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/bench/bench.py (process_bench_queue ~1830) + agent/agent/web.py (POST /benches) + agent/agent/bench.py (Server().new_bench)",
+              "mechanism": "Une file doc (NewBenchQueue) avec verrou de concurrence et priorité groupes privés transforme le payload {server, docker_image, group, candidate, mounts...} en doc Bench ; after_insert appelle agent.new_bench avec bench_config, common_site_config et credentials du registre ; l'agent tire l'image et démarre le conteneur. Les benches sont donc des conteneurs docker jetables depuis une image construite une seule fois.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "Top 5 fichiers pour reconstruire un mini-Frappe-Cloud",
+              "repo": "press + agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/agent.py ; C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/release_group/release_group.py ; C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site_update/site_update.py ; C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/agent/agent/bench.py ; C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/press/doctype/site/site.py",
+              "mechanism": "1) press/agent.py : le pattern agent unique + jobs persistants + circuit breaker. 2) release_group.py : l'épinglage (DeployCandidate = snapshot d'AppRelease, apps non touchées gardent leur release déployée). 3) site_update.py : la migration de version d'un site par move de bench avec stratégies de backup et récupération. 4) agent/agent/bench.py : le côté serveur - bench = conteneur docker, bench new-site, sid, nginx/supervisor générés. 5) site/site.py (3000+ lignes, le plus gros) : cycle de vie complet du site (création, statuts pilotés par callbacks, config, login sid, archivage).",
+              "reusable": "réutilisable tel quel (comme référence de lecture)"
+            }
+          ],
+          "verdict": "Press est une mine d'or de REFERENCE mais bien trop couplé pour être forké : 322 doctypes dont la moitié sont de la facturation (Team, Subscription, Invoice, Marketplace, Payout), du multi-cloud (AWS/Hetzner/OCI via VirtualMachine), de l'Ansible, du marketplace avec approbations, de l'audit. Zéro fork, zéro clone à épingler ici : on LIT, on n'hérite pas. En revanche, ses cinq abstractions centrales sont simples, éprouvées à grande échelle et directement imitables pour LaStarter v2 : (1) versionnage = AppSource (branche) -> AppRelease (commit) : l'unité de pinning est un hash, jamais une branche ; (2) déploiement = DeployCandidate, snapshot immuable {app, source, release, hash} d'un Release Group, build Docker une fois, image poussée dans un registre, benches = conteneurs jetables depuis cette image (NewBenchQueue avec limite de concurrence) ; (3) mise à jour de version d'un site = création d'un NOUVEAU bench depuis un nouveau candidate + move du site (backup/restore/migrate/réactivation), jamais de bench update in place ; (4) toute opération serveur passe par un agent REST local, chaque appel = document AgentJob persisté, polling 5 s + callbacks métier, circuit breaker sur serveur muet ; (5) le 'SSO universel' de Frappe Cloud n'existe pas côté code : c'est du minting de session (mot de passe admin stocké, ou bench console + LoginManager.login_as) - ce qui valide notre pari : press n'a PAS résolu l'identité fédérée, notre Frappe=IdP OIDC avec Social Login Key provisionné à la création du site est la brique qu'il nous restera à écrire nous-mêmes. Traduction LaStarter pour le POC trancheur 8081 : garder exactement la chaîne AppSource/AppRelease/ReleaseGroup/Candidate/image registry/bench-conteneur/site/agent-jobs, l'implémenter avec Frappe native (doctypes press-like dans une app LaStarter), supprimer billing/marketplace/multi-cloud, et ajouter l'OIDC que press n'a pas."
+        }
+      },
+      {
+        "label": "mine:control-plane",
+        "result": {
+          "findings": [
+            {
+              "topic": "agent v1 (frappe/agent) : architecture web et endpoints qui pilotent les benchs",
+              "repo": "agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/agent/agent/web.py (+ server.py, base.py)",
+              "mechanism": "Framework web = Flask (application = Flask(__name__)), ~200 routes @application.route, un worker RQ par Procfile/honcho, config locale config.json. Auth = @application.before_request validate_access_token : jeton Bearer ou Basic vérifié par pbkdf2_sha256 contre le hash stocké dans config.json (rotation via POST /authentication, exempt get_metrics, bypass en mode debug). Endpoints exécutant des commandes bench/serveur via subprocess (Base.execute) : POST /benches (création bench), /benches/<b>/rebuild, /restart, /limits, /archive, /benches/force-remove ; POST /benches/<b>/sites (création site), .../sites/restore, /reinstall, /rename, /create-user, /apps, /backup, /update/pull, /update_inplace, /recover_update_inplace, /archive, /config, /domains ; /benches/<b>/supervisorctl, /docker_execute, /patch/<app>, /codeserver/* ; /server/reload, /update-config, /pull-images, /push-images, /cleanup, /start-bench-workers, /stop-bench-workers, /update-nginx-access, /update (self-update de l'agent) ; /proxy/hosts, /proxy/wildcards, /proxy/upstreams, /proxy/hosts/redirects (rendu nginx) ; /database/physical-backup, /physical-restore, /binlogs/*, /replication/* ; /ssh/users, /proxysql/users, /minio/users.",
+              "reusable": "pattern à imiter, on réécrit : le découpage routes fines -> méthodes Server/Bench/Site et la validation d'entrée (validate_ip_sources, SENSITIVE_CONFIG_KEYS) sont solides, mais la stack Flask+RQ+SQLite hors Frappe et le couplage nginx/proxysql/minio/docker sur un même hôte ne correspondent pas à la doctrine LaStarter 100 % Frappe."
+            },
+            {
+              "topic": "agent v1 : réception des jobs et callback du control plane",
+              "repo": "agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/agent/agent/job.py + callbacks.py",
+              "mechanism": "Le control plane (press) pousse chaque job par HTTP ; le décorateur @job enrôle dans RQ (Redis local) et persiste Job/Step dans SQLite peewee en WAL (jobs.sqlite3), le header X-Agent-Job-Id lie au job press, et resolve_job_timeout chaîne timeout corps (agent_job_timeout) -> décorateur -> config.json avec garde-fous. Callback = callbacks.py branché en on_success/on_failure RQ : POST {press_url}/api/method/press.api.callbacks.callback avec {job_id} seulement ; press re-pull ensuite le résultat complet via GET /agent-jobs/<id> (notification push, résultats pull). Le décorateur @step journalise chaque étape (data/output/traceback) que press sonde pour la progression.",
+              "reusable": "pattern à imiter, on réécrit : le modèle Job/Step persisté localement avec durée, timeout résolu en cascade et callback minimal est exactement ce que le trancheur LaStarter veut ; le transport (Flask + RQ + SQLite) est à remplacer par du Frappe natif (voir press-agent-manager)."
+            },
+            {
+              "topic": "press-agent-manager : ce que c'est exactement",
+              "repo": "press-agent-manager",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-agent-manager/README.md + press_agent_manager/{agent,control_plane,workflow_engine,iac}",
+              "mechanism": "C'est un toolkit Frappe (AGPL-3.0) double-face : la moitié agent/ s'installe sur le site agent, la moitié control_plane/ sur le site contrôleur, pour donner à chaque composant Press le même squelette jobs/temps réel/auth. Le boilerplate couvre : jobs bidirectionnels (Agent Job/Step côté agent, Remote Job/Step/Type côté contrôleur), callbacks et accusés de réception, temps réel Socket.IO dans les deux sens, un Router REST avec OpenAPI/Swagger auto-généré (rest_api.py), un moteur de workflows durables (workflow_engine : Press Workflow/Step/Task/Object avec crons de retry), un module IaC ansible (Play/Task DocTypes), des rôles fixtures (Agent Admin, Agent Resource Owner) et une série à numérotation sans trou (gapless_series).",
+              "reusable": "réutilisable tel quel : c'est précisément le SDK « agent Frappe » dont LaStarter a besoin pour son agent/trancheur ; il est jeune et en construction (commands/deliver_events_to_controlplane.py est un stub vide, cible Frappe v16 develop), donc à épingler et à combler ponctuellement, pas à réécrire."
+            },
+            {
+              "topic": "press-agent-manager : mécanique jobs/callbacks/temps réel (détail du boilerplate)",
+              "repo": "press-agent-manager",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-agent-manager/press_agent_manager/agent/{background_jobs.py,control_plane.py,realtime.py,doctype/agent_job/agent_job.py} + control_plane/{api/remote_jobs.py,doctype/remote_job/remote_job.py}",
+              "mechanism": "Auth : Agent Settings single côté agent (controlplane_base_url + api_key/secret) et Agent doctype côté contrôleur (admin_user_api_key/secret), toutes les requêtes en Authorization: token key:secret, y compris la connexion Socket.IO. Jobs : enqueue() (wrapper de frappe.enqueue avec ContextVar + @step + capture de print) crée Agent Job/Step ; à l'état terminal l'Agent Job se soumet au contrôleur (POST /api/control-plane/remote-jobs/<id>/finalize) avec retry 30 s et flag is_submitted_to_controlplane, tandis que le contrôleur liste ses Remote Job Queued (GET /api/control-plane/remote-jobs), les fait exécuter via le hook agent_job_handlers, puis les acquitte (POST .../acknowledge, statuts Pending/Rejected). Cohérence : version_counter monotone sur jobs et steps (les mises à jour en retard sont ignorées, verrou for_update, état terminal figé), callbacks contrôleur déclenchés par le hook remote_job_callback_handlers (paires statuts -> méthode) ; temps réel : l'agent publie après commit sur le canal Redis outgoing_events_to_controlplane||<site>, un long process bench (run-socketio-event-manager) le relaie en Socket.IO vers le contrôleur et reçoit remote_job.new pour déclencher poll_queued_jobs (debounce 0,5 s), avec cron de secours toutes les 5 min.",
+              "reusable": "réutilisable tel quel : polling + ack + finalize + version_counter + retry + realtime est un protocole complet et testé ; LaStarter n'a qu'à déclarer ses job types et ses handlers via les hooks."
+            },
+            {
+              "topic": "central : modèle capacités/grants (IAM)",
+              "repo": "central",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/central/central/iam.py + CAPABILITIES.md + central/fixtures/capability.json",
+              "mechanism": "Modèle : User -> Team Member -> Team Role -> Role Capability -> Capability (resource:action), un document n'est atteignable que par son champ team indexé ; iam.py (322 lignes) fournit can(user, team, capability), resolve_team, closure des implications (server:create implique server:view...), grants scopés à un serveur (SERVER_CAPABILITIES), cache par requête, et un seul bypass opérateur (System Manager). 17 capacités en fixtures, documentées dans CAPABILITIES.md (vocabulaire figé vs rôles qui recombinent sans créer de chaîne), enforcement en double couche : permission_query_conditions + has_permission par DocType via les helpers _team_field_query_conditions/_team_field_has_permission de central/permissions.py.",
+              "reusable": "réutilisable tel quel pour le modèle : iam.py + permissions.py + les fixtures capability/team_role + CAPABILITIES.md se transportent quasi verbatim dans l'app identité LaStarter (c'est du Frappe pur, sans dépendance billing) ; le reste de central est à réécrire."
+            },
+            {
+              "topic": "central : provisioning d'un nouveau serveur (pas de cloud-init côté central)",
+              "repo": "central",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/central/central/resource_actions.py + central/infrastructure/doctype/resource_action/{resource_action.py,SPEC.md} + central/integrations/atlas.py",
+              "mechanism": "Le provisioning est une intention durable : Resource Action (états Queued->Dispatching->Sent->In Progress->Uncertain->Succeeded/Failed/Timed Out, ACTION_CAPABILITIES imposant server:create/power/... à l'acceptation ET à l'envoi, timeout commande 10 min, create retentable tant qu'il ne détient pas d'identité VM). L'exécution part via des clients signés de central/integrations/ : AtlasClient (jeton SSO signé minté par central/sso.py, header tenant, create_vm POST virtual-machines, vm_action, resize, réseau, clés SSH, URL console, configure_webhooks) vers l'Atlas régional ; les images sont pré-cuites par Cargo (connexion portée par le doctype Region : AtlasConnectionMixin/CargoConnectionMixin, enroll/register/test-connection) et consommées comme Image Offering ; la personnalisation invité (cloud-init) n'est PAS dans central : c'est l'agent compute qui pose une seed ISO cloud-init à la création VM (press-compute-agent/SPEC.md), et Pilot installe benchs/sites sur le serveur.",
+              "reusable": "pattern à imiter, on réécrit : le triptyque Resource Action durable + clients signés par plan + Région comme unique enregistrement de connexion (avec webhooks d'état entrants central.api.state_delivery.receive) est le squelette exact du déploiement LaStarter (1 client = 1 site), mais le code de central est trop couplé billing/console pour être repris en bloc."
+            },
+            {
+              "topic": "central : le front door (proxy régional)",
+              "repo": "central",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/central/central/integrations/proxy.py + central/infrastructure/doctype/site_domain/SPEC.md",
+              "mechanism": "Le front door est le proxy HTTP régional d'Atlas : Central pousse la route map (set_site/delete_site/set_domain/delete_domain via ProxyClient authentifié par jeton signé audience atlas-proxy:<region_id>, scope site:* domain:*) ; le proxy termine TLS et route un domaine vers l'IPv6 mesh du serveur. Les noms automatiques site-<label>.<region>.<zone> et admin-vm-<label>... sont décodés du label seul (adresse mesh encodée base-36, VM au-dessus du tenant), sans enregistrement côté Central ; les domaines personnalisés passent par des enregistrements Site Domain (états insert->after_insert job->PATCH route->Active, retry 5 min x5, purge au terminate), les certificats custom restant chez Pilot.",
+              "reusable": "pattern à imiter, on réécrit : la séparation route map signée côté proxy / bookkeeping côté contrôleurs / noms routés calculables sans état est exactement ce que le front door LaStarter doit faire pour ses sites clients ; le code est un mince client, à réécrire contre notre proxy."
+            },
+            {
+              "topic": "satellite : couture services VM d'Atlas",
+              "repo": "satellite",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/satellite/satellite/hooks.py + services/mesh.py + scripts/satellite-mesh-add.sh",
+              "mechanism": "Satellite est une app Frappe (required_apps=atlas) qui greffe des services sur le cycle de vie des Virtual Machine d'Atlas via deux hooks : atlas_vm_services (registre lu par le cœur d'Atlas, qui appelle validate/provision_variables/on_provision/on_status_change/teardown sans jamais importer satellite) et atlas_script_directories (arbre de scripts shell que le runner d'Atlas exécute sur l'hôte via run_host_script ; satellite n'ouvre jamais de SSH). Le seul service implémenté est MeshService (mesh WireGuard privé par tenant) : registre idempotent /etc/satellite/mesh/peers, no-op pour toute VM non marquée satellite_managed (custom field livré en fixtures).",
+              "reusable": "pattern à imiter, on réécrit : le mécanisme « service de cycle de vie branché par hook Frappe + verbes shell idempotents exécutés par le runner hôte » est le patron d'extension que LaStarter doit copier pour grepper ses services au trancheur ; le contenu (mesh) est spécifique Atlas et quasi vide."
+            },
+            {
+              "topic": "chef : plateforme d'images déclaratives (pas une app Frappe)",
+              "repo": "chef",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/chef/recipes/frappe-base/recipe.toml + recipe.py + chef/worker/bake_job.py",
+              "mechanism": "Chef est un service autonome (API HTTP avec /docs + worker arq + Redis + minio) qui prend une VM vierge, y déroule une recette pyinfra déclarée par un manifest recipe.toml (compose = héritage d'une recette parente, phases build/verify/warm_arm, inputs typés, taille VM, cibles publish), puis publie un snapshot chaud/froid comme image (builders et publishers enfichables : Docker/Local/Atlas, Local/S3). Chaque bake est un job durable streamant ses résultats d'étapes dans un flux Redis (SSE vers l'UI). Les recettes pilot et frappe-base montrent l'usage : golden bench+site, puis installation des 9 apps first-party suivie de leur désactivation pour ne garder que le schéma DB dans l'image.",
+              "reusable": "pattern à imiter, on réécrit : le format recipe.toml (composition, phases, inputs, publish) et la logique golden-image-avec-apps-désactivées sont directement transposables aux images LaStarter ; la plateforme elle-même (FastAPI/arq) est hors doctrine 100 % Frappe et à reconstruire en service Frappe ou à garder comme outil opé, pas à fourker."
+            },
+            {
+              "topic": "press-api-spec : contrats d'API typés avant implémentation",
+              "repo": "press-api-spec",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-api-spec/press_api_spec/base.py + generate_docs.py",
+              "mechanism": "Paquet Python pur (pas une app Frappe) qui décrit en pydantic + dataclass Endpoint les contrats REST de 9 services Press (compute_service_v1 : stacks/containers/volumes/network/snapshots ; proxy_service_v1 ; tier1/tier2 proxy ; bench_manager ; node_agent_service + contract ; runtime_agent) et génère des OpenAPI 3.1 + un index Swagger UI multi-specs via generate_docs.py. Le socle base.py fournit le vocabulaire commun : Method, Endpoint/EndpointGroup, Paginated, EmptyResponse, ErrorResponse avec codes d'erreur normalisés (quota_exceeded, rate_limited...).",
+              "reusable": "réutilisable tel quel comme squelette : reprendre base.py + generate_docs.py tels quels pour écrire les contrats LaStarter (contrôleur <-> agent/trancheur), en ignorant les endpoints Press ; c'est l'approche contract-first que la v2 Press a adoptée et qui évite les divergences agent/contrôleur."
+            },
+            {
+              "topic": "press-compute-agent : agent hyperviseur KVM (Frappe)",
+              "repo": "press-compute-agent",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-compute-agent/agent/api/ (SPEC.md, virtual_machine.py, disk.py, snapshot.py, virtual_machine_image.py) + agent/utils.py",
+              "mechanism": "App Frappe sur l'hôte hyperviseur qui transforme des documents en infra réelle : endpoints whitelistés POST minces (start/stop/reboot/terminate/resize/remove_public_ip, attach/detach/grow disk, snapshot new/sync/delete, capture VMI) qui délèguent aux contrôleurs DocType pilotant libvirt/qemu, qcow2/Ceph RBD, snapshots S3 et OVN ; l'identité unique instance_id (= uuid du domaine libvirt = cloud-init instance-id, seed ISO généré par genisoimage) et un reconciler update_details remettent la DB d'accord avec l'hôte. Le client orchestrateur (agent/utils.py) est un FrappeClient authentifié api_key/secret depuis le single Compute Settings, qui récupère aussi la clé publique EdDSA et des crédentiels S3 auprès de l'orchestrateur.",
+              "reusable": "pattern à imiter, on réécrit : « documents -> infra, contrôleurs comme source de vérité, instance_id unifié, endpoint de réconciliation » est le bon patron pour tout worker LaStarter touchant à l'hôte ; les SPEC.md co-locés avec plages de lignes sont aussi un standard de doc à copier. Sans objet tant que LaStarter ne gère pas de VM."
+            },
+            {
+              "topic": "press-compute-orchestrator : orchestrateur de flotte et DocTypes virtuels",
+              "repo": "press-compute-orchestrator",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-compute-orchestrator/orchestrator/orchestrator_mapper/virtual_doc_agent.py (+ api/virtual_machine.py, architecture.md)",
+              "mechanism": "App Frappe qui gère la flotte d'agents compute : Agent (crédentiels + base URL), pool d'IP avec allocation FOR UPDATE SKIP LOCKED, réseaux OVN, ledger Virtual Machine Provisioning, CA EdDSA signant des JWT courts pour le téléchargement d'images, vault S3. Sa particularité est le plan « DocTypes virtuels » : VirtualDocAgent itère les agents, fait get_list/get_doc HTTP (FrappeClient) sur chacun, cache le mapping doc->agent, et run_doc_method proxifie start/stop/terminate via /api/v2/document/... ; l'architecture.md documente honnêtement les fragilités (agent tombé = lectures cassées, cache best-effort, aucune invalidation push).",
+              "reusable": "pattern à imiter, on réécrit : à retenir = agent par hôte avec clés par agent, allocation de ressources sous file lock, JWT courts signés ; à NE PAS copier = la lecture fan-out live des DocTypes virtuels, que LaStarter remplacera par l'état remonté en webhook (pattern central state_delivery) — Press v2 lui-même évolue dans ce sens."
+            },
+            {
+              "topic": "press-on-prem-failover : appliance de reprise on-prem",
+              "repo": "press-on-prem-failover",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press-on-prem-failover/app.py + jobs.py",
+              "mechanism": "Petite app Flask + RQ autonome (pas Frappe) qui, sur un serveur on-prem, affiche un statut de setup, redresse les benchs en conteneurs Docker (initialize_and_start_benches, rendu jinja2 des configs, mapping ports/sites) et permet de télécharger/restaurer les backups de sites (POST /api/site-backup, GET /api/site-backup/download). README vide (0 octet), aucune doc.",
+              "reusable": "ignorer : code mineur, non documenté et hors stack ; ne garder que l'idée d'une appliance d'export/reprise self-service, utile plus tard à l'histoire « 1 client = 1 site LaStarter exportable »."
+            }
+          ],
+          "verdict": "Réponses aux 4 questions. (1) agent/ : Flask ~200 routes authentifiées par jeton pbkdf2 (before_request), jobs reçus en PUSH HTTP par press, exécutés en RQ + journal Job/Step en SQLite locale, callback minimal POST press_url/api/method/press.api.callbacks.callback (job_id) puis pull des résultats par press ; les endpoints bench sont /benches (POST, rebuild, restart, limits, archive), /benches/<b>/sites (POST, restore, reinstall, rename, apps, backup, update/pull, update_inplace, archive), supervisorctl, docker_execute, patch/<app>, /server/{reload,update-config,pull-images,push-images,cleanup,start|stop-bench-workers,update}, /proxy/*, /database/*, /ssh, /proxysql, /minio. Verdict agent/ : pattern à imiter (modèle Job/Step + timeouts + callback), code à réécrire. (2) press-agent-manager : toolkit Frappe AGPL double-face agent/control_plane, et OUI c'est le socle réutilisable tel quel pour l'agent LaStarter : auth token key:secret (Agent Settings <-> Agent doctype), jobs Agent Job/Step + Remote Job/Step avec version_counter, ack/reject, finalize, retry, hooks agent_job_handlers et remote_job_callback_handlers, realtime Socket.IO bidirectionnel, Router REST avec OpenAPI, workflow_engine durable, IaC ansible ; seuls résidus : un command stub et une cible Frappe v16 develop (épingler). (3) central : IAM à 17 capacités team-scopées avec implications, grants scopés serveur et double enforcement (query conditions + has_permission) — iam.py + CAPABILITIES.md + fixtures transportables quasi tels quels ; provisioning SANS cloud-init côté central : Resource Action durable -> clients signés (AtlasClient/Cargo/Pilot) dans integrations/, images pré-cuites par Cargo (recettes chef), seed cloud-init posée par l'agent compute ; satellite = couche services greffée au cycle de vie VM d'Atlas par hooks (pattern d'extension à copier), chef = plateforme d'images déclaratives pyinfra+recipe.toml hors Frappe (format à imiter) ; front door = proxy régional Atlas piloté par route map signée (Site Domain, noms site-<label> décodés du mesh). Verdicts par dépôt : press-agent-manager = réutilisable tel quel ; central (IAM) = réutilisable tel quel, le reste = pattern à imiter ; press-api-spec (base.py + generate_docs.py) = réutilisable tel quel comme squelette de contrats ; agent, satellite, chef, press-compute-agent, press-compute-orchestrator = pattern à imiter, on réécrit (orchestrator : ne pas reprendre les DocTypes virtuels en lecture fan-out, préférer les webhooks d'état) ; press-on-prem-failover = ignorer. Fil conducteur LaStarter : agent = app Frappe sur press-agent-manager, autorisation = transposer central/iam.py, provisioning = Resource Action + clients signés + images golden (format chef), contrats = style press-api-spec."
+        }
+      },
+      {
+        "label": "mine:bench-pilot",
+        "result": {
+          "verdict": "bench : réutilisable tel quel comme couche d'invocation — LaStarter pilote directement `<venv>/bin/python -m frappe.utils.bench_helper` (astuce pilot, pas besoin du CLI bench au runtime) avec les flags vérifiés de new-site (--admin-password --force --install-app multi --source-sql --db-root-* --mariadb-user-host-login-scope --setup-db --set-default), restore (--with-*-files --encryption-key, sous filelock), backup (--backup-path* --with-files --compress), plus common_site_config.json (attention écriture read-modify-write sans lock) et dns_multitenant/serve_default_site pour le mutualisé. pilot : pattern à imiter, on réécrit — produit autonome complet (Flask+Vue+tasks) non embarquable en bibliothèque, modèle de confiance host-user root-équivalent incompatible avec l'isolation client d'un bench mutualisé ; on réécrit un provisionner mince en copiant ses pratiques éprouvées : pipeline provision étapes+rollback, SiteCreationOwner (lock de création), compte MariaDB jetable scopé + nom de base aléatoire, tâches détachées avec store disque et clés d'idempotence, backups en staging + rétention. cargo : ignorer — plan de contrôle interne de Frappe Cloud dépendant d'Atlas/Proxy/Central, inutilisable hors de cette plateforme ; seul son workflow engine (press_workflow, reprise sur échec) est un pattern documenté à garder en tête pour une phase cloud LaStarter. Prochain pas POC (trancheur 8081) : un CLI mince qui enchaîne bench_helper new-site/install-app avec ces flags, lock de création, et common_site_config édité par merge.",
+          "findings": [
+            {
+              "topic": "pilot : périmètre exact de l'Admin API",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/admin/backend/api/v1/",
+              "mechanism": "188 routes Flask sous /api/v1 réparties en blueprints : auth (sessions, mot de passe, 2FA TOTP + recovery codes), benches (création, start/stop/restart, readiness checks), sites (création via NewSiteTask, apps, backups POST/GET/DELETE + download, backup-schedule, configuration site_config.json GET/PATCH, domains, restore, monitoring/uptime, storage, login), apps bench-level (fetch/get-app, switch-branch), migrations, tasks (progression par étapes), plus devtools : playground SQL (POST /databases/queries), processlist+kill, binlogs, schema, quick-actions innodb/connections, éditeur de code complet (arborescence, fichiers, git status/log/commit/push/pull), logs, notifications, stats, clés SSH, audit. Chaque route est fine : elle valide, autorise (require_scope), enfile une Task et délègue à pilot.core.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : mécanisme d'exécution — subprocess bench_helper direct, pas le CLI bench",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/pilot/core/bench/__init__.py",
+              "mechanism": "La propriété frappe_call (ligne ~192) retourne [<venv>/bin/python, -m, frappe.utils.bench_helper] : pilot n'appelle jamais le binaire `bench`, il invoque le module bench_helper de frappe avec le Python du venv du bench, puis ajoute `frappe --site <site> <commande> ...` (voir _frappe_call dans pilot/core/site/__init__.py et pilot/core/site/commands.py). Toute commande passe par pilot.utils.run_command avec stream_output ou tee_output, cwd=sites/. C'est le contrat décisif pour une CLI : pas de dépendance au CLI bench au runtime.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "pilot : runner de tâches longues (détachées, observables, reprises)",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/pilot/internal/tasks/",
+              "mechanism": "TaskRunner (runner.py) soumet ~45 types de tâches (new-site, install-app, migrate, backup-site, restore-site, drop-site, update, setup-nginx, setup-letsencrypt...) ; TaskProcess (process.py) spawn un subprocess détaché `sys.executable -m <wrapper> <task_dir>` avec BENCH_TASK_ID en env, état sérialisé sur disque par tâche (TaskStore), étapes nommées, callbacks on_success/on_failure/on_cancel, clés d'idempotence, resource_key, cancellation avec grâce, timeout, et réconciliation PID après crash.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : pipeline de création de site (provision complet)",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/pilot/core/site/provisioning.py",
+              "mechanism": "SiteProvisioner.provision : verrou de création (SiteCreationOwner, lock fichier exclusif dans bench/config/site-creations/ — creation.py), validation, création DB+site via bench_helper new-site, écriture site_config.json (email_sender_name, route), installation des apps une à une (install-app), config de communication pilot (pilot_endpoint + pilot_auth_token), écriture du common_site_config, activation scheduler, build des assets manquants, /etc/hosts + reload nginx, certificat TLS si applicable, enrollment backups par défaut (rétention keep_weekly=4/keep_yearly=10 dans site_config.json). Échec ou annulation => suppression du site (on_failure du NewSiteTask dans pilot/tasks/new_site.py).",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : secrets d'approvisionnement DB sans les exposer",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/pilot/core/site/commands.py",
+              "mechanism": "Le contextmanager setup_credentials crée un compte MariaDB jetable scopé à la base du site (frappe lit les credentials dans argv, lisible par tout processus local), le passe en argv à la commande de création, puis le détruit dès la fin ; pilot nomme lui-même la base `_ + token_hex(8)` au lieu de laisser frappe la nommer, pour pouvoir n'accorder que cette base. La restauration et reinstall passent par le même mécanisme.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : backups et rétention pilotés hors de frappe",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/pilot/core/site/backups.py",
+              "mechanism": "SiteBackups.take lance bench_helper `frappe --site X backup --backup-path <tmpdir de staging>` dans le dossier backups/ du site, déplace le run produit, applique la rétention localement et l'envoi offsite via pilot/integrations/s3/backups.py ; le schedule par défaut est un cron au niveau bench (install_schedule dans pilot/core/bench/backups.py). L'API REST expose backups, download-links et backup-schedule.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : UI admin et installation",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/admin/frontend/",
+              "mechanism": "Quatre apps Vue 3 + frappe-ui 1.x + Vite : dashboard (pages sites, marketplace/apps, tasks avec progression live, database tools, logs, storage, updates, settings, wizard de setup), éditeur de code intégré, cloud-sdk (client TS typé @frappe/cloud-sdk), in-app-embed. Le backend Flask (admin/backend/app.py create_app) sert le bundle préconstruit ; install.sh détecte la distro (apt/dnf/brew), installe les paquets et déplie un tarball de release préconstruit, sans build.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "pilot : modèle de confiance (limite dure à l'embarquement tel quel)",
+              "repo": "pilot",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pilot/SPEC.md",
+              "mechanism": "Pilot gère les benches d'un unique utilisateur hôte : accès admin d'un bench = shell de cet utilisateur = accès aux benches voisins ; l'utilisateur hôte reçoit des grants sudo passwordless nginx/certbot (donc root-équivalent) ; le port admin avant la fin du wizard est prenable par quiconque. Les benches ne sont pas une frontière de sécurité. Incompatible avec l'isolation par client qu'exige 1 client = 1 site sur bench mutualisé.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "bench : délégation de commandes — new-site/install-app sont dans frappe, pas bench",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/bench/bench/utils/cli.py",
+              "mechanism": "Le groupe racine est `@click.group(cls=MultiCommandGroup)` (bench/commands/__init__.py) et MultiCommandGroup (utils/cli.py:17) fusionne les commandes exposées par les apps installées : `bench new-site`, `install-app`, `backup`, `restore`, `migrate` sont définies dans frappe/frappe/frappe/commands/site.py. bench ne possède que init, get-app, drop, new-app, remove-app, config, setup, update, backup-all-sites, etc.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "bench : flags de bench init (provisionnement de bench automatisable)",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/bench/bench/commands/make.py",
+              "mechanism": "init : --version/--frappe-branch, --frappe-path, --clone-from (copie les repos depuis un autre bench, --clone-without-update), --ignore-exist (idempotence), --apps_path (JSON d'apps à installer), --install-app (get-app pendant l'init — system.py:100), --skip-assets, --no-backups, --no-procfile, --skip-redis-config-generation, --dev, --python. Rollback interactif (suppression du dossier) sur échec en tty.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "bench : flags de get-app (cache, deps, soft-link) et son périmètre réel",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/bench/bench/app.py",
+              "mechanism": "get-app : --branch, --overwrite, --skip-assets, --soft-link (symlink du repo au lieu de cloner, pour dev), --resolve-deps (résout required_apps des hooks avant install — make.py), --cache-key (réutilise un artefact caché, utile en CI ; 10 premiers caractères, avec file:// + cache via get_cached), --compress-artifacts, --init-bench. Le docstring et le corps le confirment : get-app installe dans l'environnement du bench (pip), jamais sur un site ; l'installation site se fait via `bench --site X install-app`.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe (via bench) : flags décisifs de new-site vérifiés dans le code",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/commands/site.py",
+              "mechanism": "new-site (lignes 19-163) : --admin-password, --force (écrase site/base existante — levier d'idempotence), --source-sql (initie la base depuis un fichier SQL : seed depuis un snapshot), --install-app multiple (site + apps en une commande), --db-root-username/--db-root-password (provision depuis une CLI sans stocker les secrets site), --mariadb-user-host-login-scope (scope du compte MariaDB, ex. '%' pour un serveur DB distant — le cas bench mutualisé), --db-name/--db-password/--db-user/--db-host/--db-port/--db-socket (envvar MYSQL_UNIX_PORT), --db-type mariadb|postgres|sqlite, --setup-db/--no-setup-db (créer user+base ou seulement bootstrapper sur une base préprovisionnée), --set-default. Appelle frappe.installer._new_site avec CallbackManager de rollback ; en tty, propose un rollback interactif.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe (via bench) : backup et restore pilotables par CLI",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/commands/site.py",
+              "mechanism": "backup (ligne ~899) : --with-files, --include/--exclude (DocTypes), --backup-path (répertoire, exactement ce qu'exploite pilot pour le staging), --backup-path-db/-files/-private-files/-conf, --ignore-backup-conf, --compress. restore (ligne ~165) : sql file + --db-root-username/--db-root-password, --db-name, --admin-password, --install-app multiple, --with-public-files/--with-private-files (tars), --force, --encryption-key (envvar FRAPPE_BACKUP_ENCRYPTION_KEY), --non-interactive, le tout sous filelock('site_restore', timeout=1). bench ajoute `bench backup-all-sites` (bench/commands/utils.py -> utils/system.py qui boucle sur les sites).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "bench : mécanique common_site_config.json et multi-tenant",
+              "repo": "bench",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/bench/bench/config/common_site_config.py",
+              "mechanism": "Un unique JSON <bench>/sites/common_site_config.json partagé par tous les sites du bench ; update_config fait un read-modify-write sans lock (deux écrivains concurrents peuvent perdre des clés — pilot, lui, verrouille ; voir replace_private_text_locked). setup_config pose les défauts à l'init (frappe_user, shallow_clone, serve_default_site=True, background_workers) et alloue automatiquement les ports en scannant les benches frères et prenant max+1 (make_ports) — cohabitation multi-bench sur un hôte. Multi-tenant piloté par bench/commands/config.py : `bench config dns_multitenant on/off`, `bench config serve_default_site on/off`, `bench config set-common-config -c key value`, `bench remove-common-config` ; la CLI choisit son site courant via `bench use` (currentsite.txt), et les overrides par site vont dans sites/<site>/site_config.json.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "cargo : ce que l'app provisionne réellement",
+              "repo": "cargo",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/cargo/cargo/cargo/doctype/machine/machine.py",
+              "mechanism": "Cargo est le plan de contrôle interne de Frappe Cloud : un site Frappe par région Atlas qui, à la demande, demande à Atlas (API VM interne, AtlasClient.create_vm) des machines (Machine.request/build, ssh keypair, resize, grow disk, snapshot, terminate), cuit les images dorées Pilot via une machine de build louée puis snapshotée (Base Ubuntu 24.04 + bench user + Pilot -> Site nu -> Apps avec signup app et ses required_apps préinstallés ; docs/image.md), possède le cluster Garage S3 de la région (gateway + storage nodes, rpc_secret/admin token, docs/object-storage.md) et converse avec Central par un unique webhook authenté par token (cargo/api/webhooks.py configure, docs/central-contract.md). Il s'enrôle lui-même via des variables d'environnement posées par le provisionneur (install.py record_upstreams) et termine le wizard de setup automatiquement.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "cargo : workflow engine résumable (seul motif extractible)",
+              "repo": "cargo",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/cargo/cargo/workflow_engine/",
+              "mechanism": "press_workflow + steps + kv + objects + tasks : un moteur de workflow multi-étapes persisté en DocTypes avec reprise sur échec, sérialisation d'arguments et introspection AST des étapes (utils.py called_methods_in_order). Réutilisé de Press pour orchestrer les longs provisionnements (setup de cluster, builds d'images).",
+              "reusable": "ignorer"
+            }
+          ]
+        }
+      },
+      {
+        "label": "mine:deploy-oidc",
+        "result": {
+          "findings": [
+            {
+              "topic": "frappe_docker compose.yaml de base : variables d'environnement réellement consommées",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/compose.yaml",
+              "mechanism": "Le service `configurator` (run-once) écrit le common_site_config via `bench set-config -g` à partir des env DB_HOST, DB_PORT, REDIS_CACHE, REDIS_QUEUE, SOCKETIO_PORT ; tous les autres services dépendent de sa réussite (depends_on condition service_completed_successfully). Le service `frontend` consomme BACKEND, SOCKETIO (fixes) et NGINX_LISTEN_PORT, FRAPPE_SITE_NAME_HEADER (défaut $$host), UPSTREAM_REAL_IP_ADDRESS/HEADER/RECURSIVE, PROXY_READ_TIMEOUT, CLIENT_MAX_BODY_SIZE ; backend consomme GUNICORN_THREADS/WORKERS/TIMEOUT. Variables d'image : CUSTOM_IMAGE, CUSTOM_TAG, PULL_POLICY, RESTART_POLICY.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : overrides jamais exploités côté LaStarter",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/overrides/",
+              "mechanism": "21 overrides à merger par -f : compose.mariadb.yaml (MariaDB 11.8 + healthcheck + DB_PASSWORD), compose.mariadb-shared.yaml (MariaDB mutualisée sur réseau externe mariadb-network, clé pour « 1 DB pour N clients »), compose.redis.yaml, compose.mariadb-secrets.yaml (DB_PASSWORD_SECRETS_FILE), compose.backup-cron.yaml (cron ofelia `bench --site all backup`, BACKUP_CRONSTRING), compose.migrator.yaml (conteneur one-shot `bench --site all migrate`, MIGRATE_SITES, skip si aucun site), compose.bind-mount-sites/db-data/redis-queue.yaml (SITES_DATA_LOCATION etc., uid 1000:0), compose.https.yaml (Traefik v3 + ACME httpChallenge + underscoreHeadersStrategy, SITES_RULE + LETSENCRYPT_EMAIL).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : recette multi-bench = 1 client = 1 stack compose sur un hôte partagé",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/overrides/compose.multi-bench.yaml",
+              "mechanism": "Connecte le bench à trois réseaux : traefik-public (externe, proxy partagé), mariadb-network (externe, DB partagée), bench-network (interne, nommé par ${ROUTER}). Le frontend expose le bench au proxy Traefik partagé via labels (SITES_RULE, ROUTER). Combiné à compose.multi-bench-ssl.yaml (TLS) et au doc « Single Server Example » qui montre 2 benches et 4 sites sur une même machine (docs/02-setup/07-single-server-example.md, sections « Create first bench », « Create second bench », « Create custom domain to existing site »).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : domaine custom d'un client vers un site existant (réécriture du Host)",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/overrides/compose.custom-domain.yaml",
+              "mechanism": "Service Caddy `reverse-proxy --to frontend:8080` exposé via Traefik sur le domaine du client, avec un middleware Traefik `customrequestheaders Host=${BASE_SITE}` : le domaine client est réécrit en nom du site d'origine, donc la résolution de site Frappe par Host fonctionne sans renommer le site. compose.custom-domain-ssl.yaml ajoute juste les labels TLS. Variables : ROUTER, SITES_RULE, BASE_SITE, BENCH_NETWORK.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "frappe_docker : multiple sites sur plusieurs ports (1 site = 1 frontend = 1 port)",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/docs/11-how-to/05-publish-multiple-sites-on-different-ports.md",
+              "mechanism": "Doc « Publish Multiple Sites on Different Ports » : un service `frontend` par site, chacun fixant FRAPPE_SITE_NAME_HEADER=<site> et publiant un port hôte distinct. Montre que la sélection de site se fait entièrement au niveau nginx en injectant le header, sans proxy mutualisé.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "frappe_docker : header X-Frappe-Site-Name injecté par le template nginx",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/resources/core/nginx/nginx-template.conf",
+              "mechanism": "Le template nginx résout le site AVANT Frappe : `proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER}` (lignes 46 et 71) et sert les assets par try_files /${FRAPPE_SITE_NAME_HEADER}/. C'est le mécanisme qui rend « 1 client = 1 site » possible derrière un seul upstream, indépendamment du Host reçu.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : référence complète des variables d'environnement",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/docs/02-setup/04-env-variables.md",
+              "mechanism": "Doc « Environment Variables Reference » couvrant, au-delà de pwd.yml : Required, Database (DB_PASSWORD, DB_PASSWORD_SECRETS_FILE, DB_HOST/PORT), Redis, Volume Bind Mounts, Reverse Proxy/SSL (SITES_RULE single et multi-sites, NGINX_PROXY_HOSTS, ports publiés), Site Configuration (FRAPPE_SITE_NAME_HEADER), Image Configuration (CUSTOM_IMAGE/TAG, PULL_POLICY), Gunicorn, nginx interne + Real IP, Migration Service (MIGRATE_SITES). example.env à la racine liste les mêmes avec leurs valeurs par défaut.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : inventaire des recettes docs/ utiles à « 1 client = 1 site »",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/docs/",
+              "mechanism": "Recettes prêtes par titre de doc : « Site operations » (04-operations/01 : new-site, --install-app, migrate, backup/restore, push_backup.py S3), « Single Server Example » (02-setup/07 : Traefik partagé + MariaDB partagée + 2 benches + custom domains), « Setup Examples » (02-setup/06 : 3 exemples compose + création premier site + mise à jour d'image), « Single Compose Setup » (01-getting-started/04), « Publish multiple sites on different ports » (11-how-to/05), « nginx-proxy + acme-companion (HTTPS) » et « Caddy reverse proxy (local HTTPS) » (11-how-to/02 et 03), « Create backups » (11-how-to/04), « Frappe Custom Applications » (09-concepts/01 : image custom par apps.json), « Build app images with GitHub Actions » (11-how-to/09), « Fork Management Best Practices » (11-how-to/08), « TLS/SSL Setup Overview » (13-explanation/04), « How assets are handled » (13-explanation/03).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe_docker : pwd.yml contient le pattern d'idempotence de création de site",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/pwd.yml",
+              "mechanism": "Le service `create-site` attend la config (boucle jq sur common_site_config.json + wait-for-it db), puis garde-fou `if [ -d \"sites/frontend\" ]; then skip; else bench new-site ... --install-app erpnext --set-default frontend; fi` : le pattern à copier pour tout provisionnement idempotent. Le reste du fichier (mots de passe admin, dev-only) est à ignorer.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "frappe_docker : images/layered et docker-bake (déjà exploités) + variante custom",
+              "repo": "frappe_docker",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/images/layered/Containerfile",
+              "mechanism": "layered/Containerfile : stage builder sur frappe/build qui fait `bench init --frappe-branch=... --apps_path=/opt/frappe/apps.json` (apps.json via secret buildx), puis stage backend sur frappe/base qui déplace sites/assets vers /home/frappe/frappe-bench/assets et branche un entrypoint qui relie les assets au volume sites au démarrage. Targets bake : bench, base, build, erpnext. images/custom/Containerfile est la variante from-scratch (python slim + nginx + chromium + restic + clients DB).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "helm : structure du chart erpnext (1 client = 1 release)",
+              "repo": "helm",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/helm/erpnext/templates/",
+              "mechanism": "Chart mono-bench : deployments nginx, gunicorn, scheduler, socketio, workers short/long/default, HPAs, PVC (persistence.worker ReadWriteMany 8Gi, sous-chemins possibles), ingress + httproute, services DB au choix (mariadb-sts, postgresql-sts, sous-charts bitnami legacy dépréciés, valkey-cache/queue activés par défaut). Toutes les ressources sont préfixées par `erpnext.fullname` = nom de release, donc « 1 client = 1 namespace + 1 release » fonctionne nativement. v8+ n'active plus de DB par défaut : mariadb-sts.enabled doit être mis à true explicitement (voir MIGRATION.md et NOTES.txt).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "helm : jobs de provisionnement site (createSite / createMultipleSites)",
+              "repo": "helm",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/helm/erpnext/templates/job-create-site.yaml",
+              "mechanism": "Job `create-site` : initContainer validate-config attend que common_site_config.json contienne db_host/redis_cache/redis_queue (boucle jq, timeout 600s) et que la DB réponde (wait-for-it), puis `bench new-site ${SITE_NAME} --no-mariadb-socket --db-type --db-host --db-port --admin-password --install-app ...` avec idempotence intégrée : si la sortie contient « already exists » le job continue au lieu d'échouer. Variantes createMultipleSites (liste sites[] avec installApps par site), dropSite/dropMultipleSites.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "helm : job configure-bench (écriture du common_site_config côté k8s)",
+              "repo": "helm",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/helm/erpnext/templates/job-configure-bench.yaml",
+              "mechanism": "Job `configure` (activé par défaut) : initContainer fixVolume qui chown sites+logs, puis écrit apps.txt et le common_site_config via `bench set-config -g db_host/redis_cache/redis_queue/socketio_port` (commande overridable par jobs.configure.command/args/envVars). La résolution DB/Redis vaut depuis les sous-charts (release-mariadb-subchart, release-valkey-cache:6379...) ou valeurs dbHost/externalRedis.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "helm : jobs backup, migrate, clearCache et job-custom (câblage post-install)",
+              "repo": "helm",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/helm/erpnext/templates/job-custom.yaml",
+              "mechanism": "jobs.backup/backupMultipleSites (`bench --site ... backup --with-files`), jobs.migrate/migrateMultipleSites (skipFailing), jobs.clearCache (redéploiement gunicorn + flush redis via serviceAccount kubectl). jobs.custom permet d'injecter des containers arbitraires : c'est la porte d'entrée pour un job LaStarter « câble OIDC » qui exécuterait bench execute. Convention gitops documentée dans le README (« Generate Additional Resources ») : `helm template frappe-bench -n erpnext frappe/erpnext -f custom-values.yaml -s templates/job-create-site.yaml > job.yaml` puis kubectl apply ; les noms de jobs intègrent un timestamp donc ré-appliquer ne casse rien.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "helm : values décisives pour 1 client = 1 namespace",
+              "repo": "helm",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/helm/erpnext/values.yaml",
+              "mechanism": "Par release : jobs.createSite.{siteName,adminPassword/adminExistingSecret,installApps,dbType}, mariadb-sts.{enabled,rootPassword,persistence}, valkey-cache/queue.enabled, externalRedis.{cache,queue}, dbHost/dbPort/dbExistingSecret (DB externe mutualisée), ingress.hosts par client (ou httproute.parentRefs vers un Gateway partagé), nginx.environment.frappeSiteNameHeader \"$host\", persistence.worker.existingClaim+subPath pour monter un volume partagé, secret.yaml génère db-root-password/mariadb-root-password depuis les values ou un secret existant.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe : résolution du site par hostname (Host, header, port)",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/app.py",
+              "mechanism": "init_request (ligne 213) : `site = _site or request.headers.get(\"X-Frappe-Site-Name\") or get_site_name(get_request_host(request))` — le header nginx gagne, sinon le Host de la requête. get_site_name (frappe/utils/__init__.py:594) retire le port (`hostname.split(\":\", 1)[0]`), donc un site servi sur :8081 doit être nommé sans port. get_request_host (frappe/utils/data.py:2039) = request.host ou header Host. frappe.init refuse tout caractère hors ^[a-zA-Z0-9._-]+$ (SITE_NAME_PATTERN, frappe/__init__.py:220) et construit site_path = sites_path/<site> (frappe/__init__.py:330).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe : multi-tenancy common_site_config (lecture, merge, overrides env)",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/config.py",
+              "mechanism": "_get_site_config fusionne sites/common_site_config.json puis sites/<site>/site_config.json (le site écrase le commun) ; c'est là que vivent db_host, redis_cache/queue, socketio_port, host_name, serve_default_site — tout ce qui est mutualisé entre sites d'un même bench. Env overrides intégrés : FRAPPE_DB_TYPE/HOST/PORT/USER/PASSWORD/NAME, FRAPPE_REDIS_QUEUE/CACHE (précèdent le JSON), et hook `extra_config` pour étendre la conf par code Python. Côté bench, l'écrivain est bench/bench/config/common_site_config.py : update_config(new_config) fait lecture+merge+écriture JSON (c'est ce que fait `bench set-config -g` ; -gp force le type).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe : dérivation de l'URL publique (get_url) — critique pour l'issuer OIDC",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/utils/data.py",
+              "mechanism": "get_url (ligne 1972) : host_name = conf.host_name/conf.hostname, sinon Host de la requête (+ X-Forwarded-Proto), sinon protocole+frappe.local.site (https si conf.ssl_certificate ou conf.wildcard.ssl_certificate), sinon Website Settings subdomain, sinon http://127.0.0.1 ; ajoute :port selon http_port/developer_mode/webserver_port. get_site_url(site) = conf.host_name du site sinon http://<site>:<webserver_port>. Donc en exécution hors requête (bench execute), l'URL de l'IdP dépend entièrement de host_name dans la config du site.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe IdP : discovery OIDC publique sans clic (well-known)",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/oauth2.py",
+              "mechanism": "get_openid_configuration (ligne 232) renvoie issuer + authorization/token/userinfo/revocation/introspection endpoints (ENDPOINTS lignes 35-41) ; handle_wellknown est branché dans app.py (ligne 156) pour tout GET /.well-known/* AVANT l'authentification, donc `GET https://<idp>/.well-known/openid-configuration` est consommable par un script sans credentials. endpoints réels : /api/method/frappe.integrations.oauth2.{authorize,get_token,openid_profile,revoke_token,introspect_token}.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe IdP : get_server_url — l'issuer dépend d'un Social Login Key nommé « frappe »",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/oauth.py",
+              "mechanism": "get_server_url (ligne 657) : `return frappe.get_value(\"Social Login Key\", \"frappe\", \"base_url\") or get_url()`. Utilisé par la discovery et get_userinfo (iss, sub). Piège : si le site IdP crée lui-même une clé « frappe » pointant ailleurs, l'issuer annoncé bascule sur cette URL ; pour un IdP pur, il ne doit pas exister de Social Login Key nommé « frappe », et il faut host_name correct dans la config pour que get_url soit juste.",
+              "reusable": "pattern à imiter, on réécrit"
+            },
+            {
+              "topic": "frappe IdP : Dynamic Client Registration RFC7591 — création de client sans Desk ni credentials admin",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/oauth2.py",
+              "mechanism": "register_client (ligne 404) : whitelisted allow_guest, POST JSON metadata RFC7591, rate limit 5/10min, actif par défaut (OAuth Settings.enable_dynamic_client_registration, default \"1\" dans oauth_settings.json). Retourne 201 avec client_id, client_secret, redirect_uris. Validations (integrations/utils.py:224) : grant authorization_code/refresh_token uniquement, response code, redirect_uris https sauf developer_mode (localhost/loopback tolérés) ; create_new_oauth_client (ligne 264) fait `frappe.get_doc({\"doctype\":\"OAuth Client\"})...save(ignore_permissions=True)` avec scopes défaut \"all\" et is_dynamic_client=1. À noter : pas de dédoublonnage (chaque POST crée un nouveau client) — l'idempotence du script doit vivre côté appelant.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe IdP : OAuth Client créable par code, client_id/client_secret auto",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/doctype/oauth_client/oauth_client.py",
+              "mechanism": "validate() : client_id = self.name (autoname), et si pas de client_secret → frappe.generate_hash(). client_secret est un champ Data en clair, donc après `frappe.get_doc({...}).insert(ignore_permissions=True)` en contexte bench (Administrator), `frappe.db.get_value(\"OAuth Client\", doc.name, [\"client_id\",\"client_secret\"])` rend les deux valeurs au script. Champs requis : app_name, scopes, default_redirect_uri, redirect_uris (une URI par ligne), grant_type \"Authorization Code\", response_type \"Code\". Permissions : System Manager uniquement (bench execute les contourne). Option skip_authorization=1 sur le client pour un SSO sans écran de consentement.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe RP : Social Login Key créable par code — preset « Frappe » + pattern idempotent officiel",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/doctype/social_login_key/social_login_key.py",
+              "mechanism": "autoname = frappe.scrub(provider_name) ; validate() exige authorize_url, access_token_url, redirect_url, et client_id/secret si enable_social_login. La méthode whitelisted get_social_login_provider(\"Frappe\", initialize=True) préremplit le preset inter-Frappe : custom_base_url=1, authorize_url=/api/method/frappe.integrations.oauth2.authorize, access_token_url=...get_token, api_endpoint=...openid_profile, redirect_url=/api/method/frappe.integrations.oauth2_logins.login_via_frappe, auth_url_data {response_type:code, scope:openid}. Le test test_social_login_key.py::create_or_update_social_login_key est le pattern officiel : db.exists → get_doc sinon new_doc + initialize + base_url = URL de l'IdP + enable_social_login → insert/save.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe RP : résolution des URLs du Social Login Key (base_url + chemins relatifs)",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/utils/oauth.py",
+              "mechanism": "get_oauth2_providers (ligne 106) lit tous les Social Login Key ; si custom_base_url, build_oauth_url (ligne 80) concatène base_url + chemin relatif mais laisse intacte toute URL déjà absolue — on peut donc tout écrire en absolu et rester juste. get_oauth_keys (ligne 140) : client_id/secret peuvent venir de la config `conf[\"<provider>_login\"] = {client_id, client_secret, redirect_uri?}` au lieu du doctype (utile pour l'injection par common_site_config). get_redirect_uri (ligne 280) : conf <provider>_login.redirect_uri sinon get_url(provider.redirect_url) — le callback RP doit donc être une URL publique du site client. www/login.py n'affiche le bouton SSO que si client_id ET base_url ET secret décryptable existent.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe RP : callbacks — preset « frappe » est un nom réservé, utiliser custom/<provider> sinon",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/oauth2_logins.py",
+              "mechanism": "login_via_frappe appelle login_via_oauth2(\"frappe\", ...) avec le nom codé en dur : via ce preset, la clé du RP doit s'appeler « frappe » (provider_name=\"Frappe\"), donc un seul IdP Frappe par site par ce chemin. Pour N IdP ou un nom libre : redirect_url = /api/method/frappe.integrations.oauth2_logins.custom/<provider_name> ; la fonction custom() extrait le provider du path et vérifie l'existence du Social Login Key avant de logger.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe IdP : claims émis (userinfo) — email_verified toujours vrai, roles inclus, sub stable",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/oauth.py",
+              "mechanism": "get_userinfo (ligne 617) renvoie sub = userid de la ligne User Social Login {parent: user, provider: \"frappe\"}, name/given/family, email, email_verified: True (donc le contrôle get_info_via_oauth côté RP passe toujours pour un IdP Frappe), picture, roles = frappe.get_roles(user), iss = get_server_url(). Le sub est frappé par User.validate → set_frappe_social_login_userid (frappe/core/doctype/user/user.py:275 et 949) : hash de 39 caractères généré une seule fois, jamais réécrit par les sauvegardes suivantes — donc créer les users IdP par code avant le premier login suffit à avoir des subs stables.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe RP : appariement de l'utilisateur à la connexion OIDC",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/utils/oauth.py",
+              "mechanism": "login_oauth_user (ligne 380) consomme le state, normalise l'email en minuscule puis update_oauth_user (ligne 474) : user existant trouvé par email ; pour provider \"frappe\"|\"office_365\" il stocke data[\"sub\"] dans User Social Login du site client (première connexion seulement, via get_user_record/signup selon sign_ups du key et trust_email_without_verified_claim pour l'email). Aucune API utilisateur nécessaire côté RP : les users se créent à la première connexion.",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe : Connected App N'EST PAS un générateur de Social Login Key",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/doctype/connected_app/connected_app.py",
+              "mechanism": "Connected App sert à consommer des tokens d'un serveur OAuth distant pour des users locaux (Token Cache, initiate_web_application_flow, callback). Sa méthode whitelisted get_openid_configuration() se contente de GETer l'URL de discovery et retourner le JSON (avec check_permission write) : aucun remplissage automatique des champs authorization_uri/token_uri/userinfo_uri, aucun lien vers Social Login Key. Pour le câblage RP la partie utile est à réécrire (fetch discovery + insert Social Login Key) ; Connected App peut servir plus tard pour des intégrations API sortantes.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "frappe IdP : consentement — OAuth Settings / OAuth Provider Settings skip_authorization",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/doctype/oauth_provider_settings/oauth_provider_settings.py",
+              "mechanism": "Deux singles réglables par code (frappe.db.set_single_value) : OAuth Settings.skip_authorization (héritage legacy) et OAuth Provider Settings.skip_authorization (\"Force\"|\"Auto\") — get_oauth_settings (integrations/utils.py:301) les arbitre. \"Force\" supprime l'écran d'approbation : expérience SSO transparente entre sites du même client. Le flag enable_dynamic_client_registration se pose pareil : set_single_value(\"OAuth Settings\", \"enable_dynamic_client_registration\", 1).",
+              "reusable": "réutilisable tel quel"
+            },
+            {
+              "topic": "frappe : TLS et tests locaux — OAUTHLIB_INSECURE_TRANSPORT piloté par la conf",
+              "repo": "frappe",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe/frappe/integrations/doctype/connected_app/connected_app.py",
+              "mechanism": "En tête de module : si CI, developer_mode ou conf.allow_tests, OAUTHLIB_INSECURE_TRANSPORT=1 (http autorisé pour oauthlib) et OAUTHLIB_RELAX_TOKEN_SCOPE=1 ; en production, validate_dynamic_client_metadata exige des redirect_uris https (localhost/loopback http tolérés). Donc un POC 8081 en http doit passer par developer_mode/allow_tests dans la config du site, et la production par https partout.",
+              "reusable": "réutilisable tel quel"
+            }
+          ],
+          "verdict": "Le câblage OIDC inter-sites sans un seul clic dans le Desk est entièrement possible avec le code existant, sans fork ni patch : (1) Côté IdP, la création du client est scriptable par deux voies officiels : POST invité /api/method/frappe.integrations.oauth2.register_client (RFC7591, actif par défaut via OAuth Settings.enable_dynamic_client_registration=1, renvoie client_id+client_secret, rate limit 5/10 min, sans dédoublonnage donc idempotence à gérer côté appelant), ou bench --site <idp> execute avec frappe.get_doc({\"doctype\":\"OAuth Client\", app_name, scopes, redirect_uris, default_redirect_uri, grant_type:\"Authorization Code\", response_type:\"Code\"}).insert(ignore_permissions=True) puis lecture de frappe.db.get_value(\"OAuth Client\", name, [\"client_id\",\"client_secret\"]) — validate() génère le secret automatiquement et le stocke en clair. (2) La discovery est publique : GET https://<idp>/.well-known/openid-configuration renvoie issuer+endpoints (app.py branche handle_wellknown avant l'auth) ; ATTENTION l'issuer vaut Social Login Key \"frappe\".base_url si cette clé existe sur l'IdP, sinon get_url() qui suit conf.host_name → headers de la requête → protocole+nom du site : pour un IdP pur, ne jamais créer de clé nommée \"frappe\" sur l'IdP, et fixer host_name dans sa site_config (ou interroger la discovery avec le bon Host) pour obtenir des URLs justes. (3) Côté RP, bench --site <rp> execute : si frappe.db.exists(\"Social Login Key\",\"frappe\") → get_doc sinon new_doc ; key.get_social_login_provider(\"Frappe\", initialize=True) ; key.base_url=<issuer IdP>, key.client_id/secret, key.enable_social_login=1 ; insert() (première fois) ou save() (ré-exécution) — c'est exactement le pattern du test create_or_update_social_login_key, idempotent par construction ; le preset remplit les endpoints relatifs et build_oauth_url les concatène au base_url. Le nom \"frappe\" est obligatoire via login_via_frappe (nom codé en dur) ; pour plusieurs IdP par site, redirect_url = /api/method/frappe.integrations.oauth2_logins.custom/<provider>. (4) Users : le sub de l'IdP est auto-généré et immuable à la création de chaque User (set_frappe_social_login_userid, hash 39, appelé dans validate), et le RP logue par email en stockant sub dans son User Social Login : rien à synchroniser manuellement. (5) Optionnel : set_single_value(\"OAuth Provider Settings\",\"skip_authorization\",\"Force\") côté IdP pour un SSO sans écran de consentement ; POC http possible via developer_mode/allow_tests. (6) Infra : 1 client = 1 stack compose via compose.multi-bench.yaml + Traefik partagé + compose.mariadb-shared.yaml (ou un frontend par site sur un port dédié, doc « Publish Multiple Sites on Different Ports », via FRAPPE_SITE_NAME_HEADER/X-Frappe-Site-Name), et 1 client = 1 namespace/release helm avec jobs.createSite idempotent (« already exists » non bloquant) + jobs.custom pour exécuter le script d'étapes 1-3 post-install, ou generate via `helm template -s templates/job-create-site.yaml` pour du gitops. Rien dans frappe_docker/helm ne câble l'OIDC : le script LaStarter (bench execute des deux côtés + register_client ou insert OAuth Client) est à écrire, mais chaque brique qu'il appelle existe et est testée dans le framework."
+        }
+      },
+      {
+        "label": "mine:carte-236",
+        "result": {
+          "findings": [
+            {
+              "topic": "Point 1 - sync d'appartenance cross-app",
+              "repo": "raven_integration",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/raven_integration/README.md",
+              "mechanism": "App Python qui garde l'appartenance aux workspaces/canaux Raven synchrone avec des règles déclarées par n'importe quelle app Frappe : une app hôte s'enregistre via le hook `raven_membership_providers` et répond 'quels users matchent cette règle ?', l'app calcule le set attendu (OR/AND), applique le diff en temps réel (debounce) + reconcile nocturne. Modèle de sécurité remarquable : ne supprime que les lignes qu'il a lui-même insérées (flag `added_by_rule`), ne détruit jamais un workspace/canal Raven, endpoints admin-only via `frappe.only_for` extensible par hook. Intérêt LaStarter : élevé — c'est exactement le pattern 'un site émet des identités pour les autres apps' (logique cross-app déclarative par hooks, zéro logique métier dans le synchroniseur).",
+              "reusable": "pattern à imiter, on réécrit (le mécanisme provider/hook + diff + flag de provenance est le modèle pour la synchro identités LaStarter ; le code lui-même est lié à Raven)"
+            },
+            {
+              "topic": "Point 1 - télémétrie produit",
+              "repo": "pulse",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pulse/README.md",
+              "mechanism": "App qui collecte les événements d'usage : le navigateur poste directement sur un site Pulse (client servi depuis /assets/pulse/js/pulse_client.js), buffer Redis, persistance en `Pulse Event` ; activation par site-config `pulse_host`+`pulse_api_key`, CORS géré par nginx. Désactivé hors Frappe Cloud sauf `pulse_force_enabled` (test-only). Intérêt : moyen — utile pour la métrologie d'une flotte de sites LaStarter.",
+              "reusable": "pattern à imiter, on réécrit (ingest cross-origin par clé API + buffer Redis)"
+            },
+            {
+              "topic": "Point 1 - registre d'apps (catalogue)",
+              "repo": "marketplace",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/marketplace/README.md",
+              "mechanism": "Registre de données, pas une app : `apps.json` (index) + `apps/<name>.json` (releases immuables = paire branch+commit + version + plage de compat Frappe + dépendances), chaque release passe par une PR gated par une chaîne de checks CI (schema_check -> semgrep_check -> get_app_check) ; workflow GitHub Actions réutilisable pour que chaque app publie ses releases. Intérêt : élevé — c'est littéralement un catalogue d'apps épinglées par commit, la donnée modèle pour le 'catalogue de déploiement' LaStarter.",
+              "reusable": "pattern à imiter, on réécrit (le format de release commit-scoped et le gating PR/CI se copient presque tels quels, adaptés au catalogue LaStarter)"
+            },
+            {
+              "topic": "Point 1 - hub de templates Builder",
+              "repo": "builder_hub",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/builder_hub/README.md",
+              "mechanism": "Hub centralisé de templates de pages Frappe Builder : chaque template est une vraie Builder Page `is_template=1` groupée (fixtures sous builder_hub/builder_templates/<group>/), les sites Builder fetchent le catalogue et les bundles par HTTP, ce qui découple le cycle de release des templates de l'app Builder. 28 groupes de templates multi-pages. Intérêt : moyen — pertinent si LaStarter livre des sites web clés en main.",
+              "reusable": "pattern à imiter, on réécrit (hub de templates avec release cycle indépendant) si offre sites web ; ignorer sinon"
+            },
+            {
+              "topic": "Point 1 - scripts d'exploitation",
+              "repo": "fc-scripts",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/fc-scripts/README.md",
+              "mechanism": "Collection de scripts d'exploitation à lancer sur des sites Frappe Cloud : purge d'attachments (fichiers + DB), analyse des deadlocks depuis le log d'erreur MariaDB, check/réparation de tables, et trois finders qui localisent les hooks qui ralentissent les saves/documents/formulaires en greppant apps/. Intérêt : élevé pour l'ops quotidien d'un bench mutualisé.",
+              "reusable": "réutilisable tel quel (scripts autonomes, MIT), à intégrer dans la boîte à outils ops LaStarter"
+            },
+            {
+              "topic": "Point 1 - control plane de tests de release",
+              "repo": "release_manager",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/release_manager/README.md",
+              "mechanism": "App Frappe = control plane/UI au-dessus du moteur release_tests (dépôt voisin) : enregistre des sites cibles (Testing Site : URL, Host header, auth login ou token API), catalogue master de cas de test, plans planifiés (Manual/Hourly/Daily/Weekly), exécutions en background avec résultats pas-à-pas et suivi d'action corrective ; le moteur est un pur client HTTP, rien à installer sur les cibles. ROADMAP.md trace l'évolution vers une vraie plateforme de release. Intérêt : élevé — démontre le pattern 'un desk pilote N sites distants par API token' qui est le cœur du futur LaStarter.",
+              "reusable": "pattern à imiter, on réécrit ( Testing Site + token + Test Connection + plans planifiés = squelette du trancheur/CLI LaStarter)"
+            },
+            {
+              "topic": "Point 1 - benchmarks framework",
+              "repo": "caffeine",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/caffeine/README.md",
+              "mechanism": "Suite de microbenchmarks pyperf (`bench run-microbenchmarks`) + load testing, objectif officiel : x2 la vitesse de l'écosystème Frappe ; méthodologie sérieuse (machine dédiée Linux, pyperf compare_to avec tests statistiques). Intérêt : moyen — outil de mesure à sortir quand il faudra valider les perfs du trancheur ou d'un bench mutualisé.",
+              "reusable": "réutilisable tel quel ponctuellement (benchmarker avant/après optimisations LaStarter)"
+            },
+            {
+              "topic": "Point 1 - SDK React",
+              "repo": "frappe-react-sdk",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe-react-sdk/README.md",
+              "mechanism": "Hooks React (SWR) au-dessus de frappe-js-sdk : auth cookie+token, CRUD documents, upload de fichiers avec progression, appels aux endpoints whitelisted, recherche debouncée. Intérêt : nul dans le périmètre LaStarter actuel (100 % Frappe Desk/frappe-ui, pas de SPA React autonome).",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 1 - SDK JS/TS REST",
+              "repo": "frappe-js-sdk",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe-js-sdk/README.md",
+              "mechanism": "Lib TypeScript (Axios) pour l'API REST Frappe : login cookie/token, get/list/count/create/update/delete, upload, appels API. Intérêt : faible — ne servirait que si LaStarter écrit un client Node externe (CLI) parlant à des sites Frappe.",
+              "reusable": "ignorer (ou à miner seulement si la CLI LaStarter veut réutiliser un client REST TS éprouvé)"
+            },
+            {
+              "topic": "Point 1 - éditeur de documents",
+              "repo": "writer",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/writer/README.md",
+              "mechanism": "Frappe Writer, 'a delightful document editor' : app de traitement de texte dans Frappe (Vue), licence AGPL-3.0, README minimal sans doc d'architecture. Intérêt : moyen comme brique bureautique de la suite, mais le README n'apprend rien — il faut lire le code pour évaluer.",
+              "reusable": "à miner plus tard (brique suite bureautique) ; rien à réutiliser aujourd'hui"
+            },
+            {
+              "topic": "Point 1 - présentations",
+              "repo": "slides",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/slides/README.md",
+              "mechanism": "Frappe Slides : app de présentations, page /slides servie par le site, front Vue développé via vite dev server (yarn dev --host), setup bench standard. Intérêt : moyen, même statut que writer (brique suite).",
+              "reusable": "à miner plus tard ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 1 - microVM Firecracker (Go)",
+              "repo": "atlas-neo",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/atlas-neo/metal/docs/api.md",
+              "mechanism": "Pas de README racine : le dépôt ne contient que metal/, un daemon Go `metald` ('Firecracker microVM manager', 0 étoile) — API JSON sur unix socket /run/metal.sock, opérations VM async (202 + poll GET /vms/{id} jusqu'à state settled), stockage bulk LVM/loop, units systemd (metal.service, metal-vm@.service), doc d'intégration testing sur hôte réel (KVM requis, pas de CI). C'est la nouvelle couche hyperviseur de Frappe Cloud v2, en chantier. Intérêt : élevé à terme, hors périmètre immédiat.",
+              "reusable": "à miner plus tard (surveiller la stabilisation de v2) ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 1 - usine à images serveurs",
+              "repo": "chef",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/chef/README.md",
+              "mechanism": "Plateforme déclarative de baking d'images : prend une VM vierge, exécute une recipe (projet pyinfra + manifest recipe.toml : image de base, taille, phases build/verify/warm_arm, inputs typés), snapshotte à chaud et à froid, publie vers S3/Atlas/Local — 'Packer, mais pour humains et agents' avec OpenAPI ; le core ne connaît ni bench ni site, tout le domaine vit dans les recipes, Builder/Publisher sont des backends pluggables ; pipeline = Bakes durables avec résultats par étape en streaming ; dev local en docker compose (chef-api, chef-worker, redis, minio). Intérêt : élevé — c'est l'usine à golden images de Frappe Cloud v2.",
+              "reusable": "pattern à imiter, on réécrit (recipe = pyinfra + manifest typé, séparation core/plug-ins, images chaudes et froides) pour des images serveurs LaStarter"
+            },
+            {
+              "topic": "Point 1 - couche service v2",
+              "repo": "satellite",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/satellite/README.md",
+              "mechanism": "App Frappe 'Service layer for Atlas' : routing, gateway, mesh, bench/site derrière la frontière du cycle de vie VM (renvoie à une spec/28). README template sans vraie doc ; le contenu utile est dans le code et la spec. Intérêt : moyen-élevé uniquement pour comprendre l'architecture v2.",
+              "reusable": "à miner quand on étudiera Frappe Cloud v2 ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 1 - provisioning services cloud",
+              "repo": "cargo",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/cargo/README.md",
+              "mechanism": "App Frappe qui provisionne et gère les services Frappe Cloud à la demande : construit les images (base, apps, bare site sans app de signup), capture l'image du builder après flush disque + arrêt Atlas avec timeout 5 min (échec = pas d'image), demande caching et warm memory snapshot aux hosts, et installe les services annexes (cluster Garage, host Datum) planifiés par Atlas. Intérêt : élevé pour la future plateforme cloud LaStarter.",
+              "reusable": "pattern à imiter, on réécrit (cycle image → cache → warm snapshot, garde-fous avant capture)"
+            },
+            {
+              "topic": "Point 2 - règles Semgrep (non cloné)",
+              "repo": "semgrep-rules",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Semgrep rules specific to Frappe Framework' (Python, 68 étoiles, actif). Les CI des apps Frappe (ex. cargo) l'utilisent pour le gating sécurité. Intérêt : élevé pour l'hygiène CI des apps LaStarter.",
+              "reusable": "réutilisable tel quel (consommer les règles dans la CI LaStarter)"
+            },
+            {
+              "topic": "Point 2 - email builder visuel (non cloné)",
+              "repo": "Letters",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Visual email builder for Frappe' (Python, 19 étoiles). Intérêt : moyen si les sites clients LaStarter ont besoin d'emails marketing éditables.",
+              "reusable": "à miner si besoin emails visuels ; ignorer sinon"
+            },
+            {
+              "topic": "Point 2 - canvas collaboratif (non cloné)",
+              "repo": "draw",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : '[Experimental] One canvas for mind maps, flowcharts, whiteboards & block diagrams, avec co-édition temps réel et partage style Writer, dans Frappe' (JavaScript, 22 étoiles). Expérimental. Intérêt : nul aujourd'hui.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - composants canvas (non cloné)",
+              "repo": "canvas-kit",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Shared components for building visual canvas editors' (Vue, 2 étoiles). Dépendance/brique de draw. Intérêt : nul si draw est ignoré.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - form builder (non cloné)",
+              "repo": "frappe-forms",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Google-Forms-style form builder for Frappe that compiles forms to real DocTypes. Headless frappe-ui SPA' (Python, 4 étoiles). L'idée 'formulaires déclaratifs compilés en vrais DocTypes' est architecturalement intéressante. Intérêt : moyen.",
+              "reusable": "pattern à imiter, on réécrit (compilation déclaration -> DocTypes) si besoin de formulaires publics ; le dépôt lui-même jeune/expérimental"
+            },
+            {
+              "topic": "Point 2 - lib Gantt (non cloné)",
+              "repo": "gantt",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Open Source Javascript Gantt' (JavaScript, 6155 étoiles) — lib standalone, pas une app Frappe (c'est la lib utilisée par les apps Frappe). Intérêt : moyen, seulement si un module planning LaStarter en a besoin.",
+              "reusable": "réutilisable tel quel comme dépendance npm au moment venu ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 2 - générateur de previews (non cloné)",
+              "repo": "preview_generator",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Generates preview image for HTML' (Python, 21 étoiles). Intérêt : faible — micro-outil rendu HTML -> image.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - télémétrie flotte (CLONÉ, contrairement à l'énoncé)",
+              "repo": "datum",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/datum/README.md",
+              "mechanism": "Service de telemetry de flotte : producteurs JSON, agents remote-write et collecteurs OTLP poussent dans Datum, qui est la seule porte d'écriture (JWT obligatoire, 'serves no reads') devant ClickHouse ; métriques, logs et traces séparés avec rétentions propres ; les lecteurs passent par SQL ClickHouse avec un compte read-only dédié. Intérêt : élevé pour l'observabilité d'un bench mutualisé LaStarter.",
+              "reusable": "pattern à imiter, on réécrit (une seule porte d'écriture authentifiée + lecture SQL directe) ; le service lui-même est lithium pour la flotte Frappe Cloud"
+            },
+            {
+              "topic": "Point 2 - plateforme d'inférence (CLONÉ)",
+              "repo": "grove",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/grove/grove/playbooks/README.md",
+              "mechanism": "Contrôle-plane Frappe d'une plateforme d'inférence : doctypes d'infrastructure (Gateway/Ingress/Inference/Machine) + billing à l'usage + clients providers/DNS, data plane séparé (pathway, Go). Le joyau pour LaStarter : grove/playbooks/ = UN projet Ansible par type de box, avec un mixin `AnsibleHost` (grove/grove/ansible.py) qui permet à un doctype de faire `self.run_playbook('deploy_agent.yml')` via ansible_runner — l'infra-as-code pilotée depuis le Desk, jamais depuis un shell. Intérêt : élevé — c'est le meilleur exemple de l'org de 'Frappe comme control plane d'infrastructure'.",
+              "reusable": "pattern à imiter, on réécrit (AnsibleHost + un projet Ansible par doctype d'infrastructure) — modèle direct pour le déploiement LaStarter"
+            },
+            {
+              "topic": "Point 2 - data plane inférence (CLONÉ)",
+              "repo": "pathway",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/pathway/README.md",
+              "mechanism": "Binaire Go data plane de Grove : TLS :443 avec wildcard rechargé à chaud, résolution bearer -> clé -> user -> groupes avec contrôle crédit/grant, sélection d'engine (région, capacité, stickiness, least in flight), métrage d'usage, self-upgrade sans coupure ; un binaire, deux plans (Gateway vs Ingress) décidés par l'id injecté, refus au démarrage si les deux. Intérêt : moyen — beau pattern de gateway multi-tenant, hors périmètre immédiat.",
+              "reusable": "pattern à imiter, on réécrit (séparation plan/ingress, refus au démarrage, TLS hot-reload) ; ignorer le code lui-même"
+            },
+            {
+              "topic": "Point 2 - revue de code IA (CLONÉ)",
+              "repo": "guard",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/guard/README.md",
+              "mechanism": "App Frappe de revue de PR GitHub par agent IA qui indexe tout le codebase en graphe (définitions, appels, imports, routes HTTP, et pour Frappe : doctypes, links, hooks, chaînes frappe.call) pour trouver ce qu'un changement casse, y compris dans les autres dépôts de l'équipe ; un site = une entreprise, tout passe par le Desk ; docs/deployment.md et docs/spec/ existent. Intérêt : moyen — gadget pour LaStarter, mais son parseur Frappe (doctypes/hooks/links en graphe) est précieux pour un futur audit d'apps épinglées.",
+              "reusable": "à miner (le graphe de code Frappe) ; ignorer le produit"
+            },
+            {
+              "topic": "Point 2 - docs internes Frappe Cloud v2 (CLONÉ)",
+              "repo": "platform",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/platform/docs/content/regional/bootstrap.md",
+              "mechanism": "Site de documentation interne VitePress ('frappe-platform-docs') : LA vue d'ensemble officielle de Frappe Cloud v2 à travers Central, Atlas, Pilot, Cargo et Frappe — responsabilités par service, communication inter-services, authentification/trust, workflows (création VM brute, signup, bootstrap Pilot, fast-start, domaines, in-app cloud, lifecycle), infrastructure (bootstrap régional, images, object storage), API, debugging et index des dépôts. regional/bootstrap.md est un vrai runbook procédural de mise en route d'une région (ordre Atlas -> Metal -> proxy -> Cargo -> Garage -> Datum, avec liens vers l'installateur atlas-vm). Intérêt : élevé — voir verdict central.",
+              "reusable": "réutilisable tel quel comme carte de lecture pour comprendre v2 ; le FORMAT (docs/ par responsabilité + journeys + runbooks) est le pattern à imiter pour la doc LaStarter"
+            },
+            {
+              "topic": "Point 2 - PWA utilitaires (CLONÉ)",
+              "repo": "toolbox",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné (contrairement à l'énoncé). Description : 'Frappe Toolbox, everyday calculators, converters, and India business lookups (Frappe 17 + Vue 3 PWA)' (JavaScript, 6 étoiles). Utilitaires grand public centrés Inde. Intérêt : nul pour LaStarter.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - serveurs mail multi-tenant (CLONÉ)",
+              "repo": "suite_cloud",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/suite_cloud/README.md",
+              "mechanism": "App qui fait tourner les serveurs mail derrière Frappe Suite : monte des clusters Stalwart, un 'Suite Tenant' porte limites/clé/secret, le tenant ne parle jamais à l'admin API du serveur — toute demande (domaine, boîte, mot de passe) passe par Suite Cloud qui vérifie la propriété, enregistre, et pousse au cluster dans la même transaction ; les end users se connectent directement au cluster avec des app passwords. Intérêt : moyen-élevé — pattern propre de service mutualisé avec courtier de contrôle.",
+              "reusable": "pattern à imiter, on réécrit (courtier entre tenants et service partagé) si LaStarter offre du mail ; ignorer le code Stalwart"
+            },
+            {
+              "topic": "Point 2 - client JMAP (CLONÉ)",
+              "repo": "jmaplib",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'A complete, capability-driven JMAP client for Python' (Python, 1 étoile). Client du protocole mail JMAP, cohérent avec suite_cloud/Stalwart. Intérêt : faible.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - WhatsApp officiel (CLONÉ)",
+              "repo": "whatsapp",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Official whatsapp integration for frappe apps' (Python, 32 étoiles, actif). Canal de notification via l'API WhatsApp Business Cloud. Intérêt : moyen seulement si besoin de notifications clients par WhatsApp.",
+              "reusable": "réutilisable tel quel au besoin (app officielle maintenue) ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 2 - blog (CLONÉ)",
+              "repo": "blog",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Write and publish blog' (Python, 19 étoiles). Intérêt : moyen pour les sites clients (contenu/SEO).",
+              "reusable": "à miner comme brique optionnelle ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 2 - newsletter (CLONÉ)",
+              "repo": "newsletter",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Newsletter Management' (Python, 26 étoiles). Intérêt : moyen, couple avec Letters/blog.",
+              "reusable": "à miner comme brique optionnelle ; ignorer aujourd'hui"
+            },
+            {
+              "topic": "Point 2 - paiements (CLONÉ)",
+              "repo": "payments",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'A payments app for frappe' (Python, 179 étoiles, active) — l'app de gateways de paiement réutilisée par la facturation Frappe Cloud/ERPNext. Intérêt : élevé à terme pour la facturation de la plateforme cloud LaStarter.",
+              "reusable": "réutilisable tel quel (app officielle) au stade plateforme ; ignorer pour le POC"
+            },
+            {
+              "topic": "Point 2 - backups offsite (CLONÉ)",
+              "repo": "offsite_backups",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Offsite Backup Integrations for Frappe' (Python, 28 étoiles). Sauvegardes vers des stores distants — sujet central de souveraineté pour un hébergeur. Intérêt : élevé pour l'ops LaStarter.",
+              "reusable": "réutilisable tel quel ou pattern à imiter selon le backend de stockage choisi"
+            },
+            {
+              "topic": "Point 2 - print designer (CLONÉ)",
+              "repo": "print_designer",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Visual print designer for Frappe / ERPNext' (JavaScript, 461 étoiles, très actif). Designer visuel de modèles d'impression. Intérêt : élevé comme brique métier des clients.",
+              "reusable": "réutilisable tel quel (brique épinglable au catalogue)"
+            },
+            {
+              "topic": "Point 2 - téléphonie (CLONÉ)",
+              "repo": "telephony",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Telephony for Frappe apps' (Python, 24 étoiles). Intégrations appel/softphone (utilisée notamment par CRM). Intérêt : faible hors besoin CRM téléphonie.",
+              "reusable": "ignorer"
+            },
+            {
+              "topic": "Point 2 - app builder visuel (CLONÉ)",
+              "repo": "studio",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Visual App Builder for the Frappe Framework' (Vue, 292 étoiles, actif). Génération low-code d'apps/DASHBOARD complémentaire de Builder. Intérêt : moyen-élevé pour l'offre low-code LaStarter.",
+              "reusable": "à miner (brique épinglable) ; pas prioritaire pour le POC trancheur"
+            },
+            {
+              "topic": "Point 2 - éducation (CLONÉ)",
+              "repo": "education",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Cloné. Description : 'Open source education / school management system' (Python, 682 étoiles). Verticale métier complète. Intérêt : nul sauf client du secteur éducation.",
+              "reusable": "ignorer (épingler au catalogue seulement si client éducation)"
+            },
+            {
+              "topic": "Point 3 - LE code du déploiement Frappe Cloud v1",
+              "repo": "press",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/playbooks/",
+              "mechanism": "Press EST Frappe Cloud v1 : control plane (app Frappe : servers, sites, benches, backups, billing, marketplace) + dashboard. Le déploiement des serveurs y est codé de bout en bout : press/press/playbooks/ contient 167 playbooks Ansible (database.yml, docker.yml, agent_sentry.yml, TLS, monitoring, mariadb downgrade, etc.) qui provisionnent et maintiennent les serveurs clients, avec rôles ; press/deployment/ = config de production de frappe.cloud elle-même (supervisor, nginx, redis, common_site_config) 'copies kept in git for reference, nothing applies them automatically' + production.md = procédure de mise à jour ('ne jamais bench update en prod, tirer chaque app à la main') ; l'agent on-server est un dépôt séparé (frappe/agent, non cloné). README : le setup local renvoie vers docs.frappe.io/cloud.",
+              "reusable": "pattern à imiter, on réécrit (playbooks Ansible versionnés dans le repo du control plane = la preuve que ça se fait ; on ne reprend pas le monolithe press)"
+            },
+            {
+              "topic": "Point 3 - runbooks d'exploitation v2",
+              "repo": "atlas",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/atlas/docs/operate/find-a-problem.md",
+              "mechanism": "Atlas ('Virtual machine infrastructure for Frappe Cloud') documente son exploitation en profondeur : docs/operate/ = runbooks par composant (atlas.md, metal.md, telemetry.md, diagnose-a-host.md, roll-out-metald.md, dashboards.md) avec table symptôme -> premier check -> guide suivant, docs/region/ = provisioning d'hôtes, docs/incidents/ = post-mortems datés (corruption disque guest, stall NIC, restart WireGuard), docs/interfaces/ = contrats (metal-contract, signing-keys). C'est la doc d'exploitation la plus aboutie de l'org. Intérêt : élevé comme modèle de runbook ops.",
+              "reusable": "pattern à imiter, on réécrit (structure runbooks + post-mortems + contrats d'interfaces) pour l'ops LaStarter"
+            },
+            {
+              "topic": "Point 3 - contrôle-plane v2 et compléments",
+              "repo": "central",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/central/README.md",
+              "mechanism": "Central = control plane de Frappe Cloud v2 (app Frappe + console Vue : teams, permissions, servers, sites, managed services, billing) ; son README expose explicitement la division du travail : 'Atlas runs the regional infrastructure. Pilot manages benches and sites. Cargo builds server images.' Pilot = 'Frappe Server Manager' (benches/sites sur vos propres serveurs, CLI+UI, remplace bench au quotidien). Aucun de ces dépôts ne contient à lui seul un runbook complet — c'est le système entier qui EST le runbook, documenté en commun dans platform. Intérêt : élevé comme architecture cible à long terme.",
+              "reusable": "pattern à imiter, on réécrit (séparation control plane / infra régionale / manager de benches / builder d'images) ; rien de déployable tel quel pour LaStarter"
+            },
+            {
+              "topic": "Point 3 - migration vers Frappe Cloud (non cloné)",
+              "repo": "frappe_cloud_migrator",
+              "path": "C:/Users/Bastien/Documents/Projects/LaStarterProject/.research/frappe-org.json",
+              "mechanism": "Non cloné. Description : 'Migrate Sites to Frappe Cloud'. Outil de migration de sites existants vers la cloud — pertinent pour onboarder des clients LaStarter auto-hébergés. Intérêt : moyen-élevé au stade plateforme.",
+              "reusable": "à miner au stade plateforme ; ignorer aujourd'hui"
+            }
+          ],
+          "verdict": "QUESTION CENTRALE (déploiement Frappe Cloud de bout en bout documenté ou codé ?) Réponse franche : OUI, le déploiement Frappe Cloud est à la fois CODÉ et DOCUMENTÉ, mais PAS dans un dépôt unique : (1) CÔTÉ CODE v1 : press est le code même de Frappe Cloud, et il embarque l'infra-as-code complet — 167 playbooks Ansible dans C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/playbooks/ (database, docker, TLS, agent, monitoring...) qui provisionnent les serveurs clients, plus press/deployment/ qui garde en git la config de production de frappe.cloud (nginx, supervisor, redis) avec une procédure de mise à jour manuelle en production.md ; il n'y a toutefois pas de script 'from zero to prod' — le setup local renvoie à docs.frappe.io/cloud et l'agent on-server est dans frappe/agent (non cloné). (2) CÔTÉ DOCS INTERNES v2 : platform (C:/.../frappe/platform/) est LE dépôt de documentation interne VitePress qui décrit Frappe Cloud v2 de bout en bout (responsabilités Central/Atlas/Metal/Pilot/Cargo, communication, auth/trust, workflows, regional/bootstrap.md = vrai runbook procédural de création d'une région avec l'ordre Atlas->Metal->proxy->Cargo->Garage->Datum), complété par atlas/docs/operate/ (runbooks par composant, diagnostic hôte, post-mortems d'incidents datés) et atlas/docs/region/ (provisioning d'hôtes, installateur atlas-vm). CONCLUSION OPÉRABLE : il n'existe aucun dépôt 'runbook unique' de déploiement Frappe Cloud ; la connaissance est répartie entre press (v1, code+Ansible), platform (v2, doc d'architecture+bootstrap régional) et atlas (v2, runbooks d'exploitation). Pour LaStarter, la leçon n'est donc pas à copier un dépôt mais deux patterns confirmés par le code : le control plane Frappe qui exécute l'infra-as-code lui-même (press/playbooks ; et surtout grove : mixin AnsibleHost + un projet Ansible par doctype, C:/.../frappe/grove/grove/ansible.py), et une doc interne versionnée par service avec runbooks et post-mortems (platform + atlas/docs). BILAN DES 39 DÉPÔTS PASSÉS EN REVUE : à miner pour LaStarter maintenant : marketplace (format de catalogue épinglé commit-scoped), release_manager (control plane pilotant N sites par token), fc-scripts (ops réutilisable tel quel), grove (infra-as-code piloté depuis Desk), press/playbooks et platform/atlas (références d'architecture et de runbooks) ; briques épinglables plus tard : payments, print_designer, offsite_backups, semgrep-rules, blog/newsletter/Letters, studio ; à ignorer : frappe-react-sdk, frappe-js-sdk, toolbox, telephony, education, draw, canvas-kit, preview_generator, jmaplib ; à surveiller : atlas-neo (WIP Firecracker), chef/cargo/satellite/central/pilot (architecture v2). NOTE DE MÉTHODE : l'énoncé du point 2 était faux sur un point — sur les 24 dépôts listés comme non clonés, 17 SONT clonés localement (datum, grove, pathway, guard, platform, toolbox, suite_cloud, jmaplib, whatsapp, blog, newsletter, payments, offsite_backups, print_designer, telephony, studio, education) ; seuls semgrep-rules, Letters, draw, canvas-kit, frappe-forms, gantt et preview_generator sont réellement absents, et ce sont les seuls classés sur la description seule."
+        }
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Mine"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "mine:press",
+      "phaseIndex": 1,
+      "phaseTitle": "Mine",
+      "agentId": "a3d9d4b7564b05e6f",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1793150537815,
+      "queuedAt": 1793150537783,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Press est une mine d'or de REFERENCE mais bien trop couplé …",
+      "promptPreview": "Contexte projet : LaStarter v2 = suite collaborative souveraine open source 100 % Frappe : framework Frappe (MIT) comme socle, apps Frappe comme briques épinglées, Frappe = IdP OIDC universel (un site identité émet les identités pour toutes les apps), 1 client = 1 site Frappe sur un bench mutualisé, CLI + catalogue de déploiement, plateforme cloud LaStarter inspirée de Frappe Cloud à terme. Tous l…",
+      "promptFramed": true,
+      "lastProgressAt": 1793151175222,
+      "tokens": 105775,
+      "toolCalls": 73,
+      "durationMs": 637406,
+      "resultPreview": "{\"findings\":[{\"topic\":\"Q1 : création de site - entrée API dashboard\",\"repo\":\"press\",\"path\":\"C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/press/press/api/site.py (fonction _new, ~ligne 168)\",\"mechanism\":\"L'API dashboard new() valide l'équipe et les fichiers de restauration éventuels, choisit le Release Group / domaine / cluster, puis cherche le Bench Actif le plus récent du groupe su…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "mine:control-plane",
+      "phaseIndex": 1,
+      "phaseTitle": "Mine",
+      "agentId": "ad4f63b075e983f5a",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1793150537815,
+      "queuedAt": 1793150537783,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Réponses aux 4 questions. (1) agent/ : Flask ~200 routes au…",
+      "promptPreview": "Contexte projet : LaStarter v2 = suite collaborative souveraine open source 100 % Frappe : framework Frappe (MIT) comme socle, apps Frappe comme briques épinglées, Frappe = IdP OIDC universel (un site identité émet les identités pour toutes les apps), 1 client = 1 site Frappe sur un bench mutualisé, CLI + catalogue de déploiement, plateforme cloud LaStarter inspirée de Frappe Cloud à terme. Tous l…",
+      "promptFramed": true,
+      "lastProgressAt": 1793150999042,
+      "tokens": 119206,
+      "toolCalls": 41,
+      "durationMs": 460588,
+      "resultPreview": "{\"findings\":[{\"topic\":\"agent v1 (frappe/agent) : architecture web et endpoints qui pilotent les benchs\",\"repo\":\"agent\",\"path\":\"C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/agent/agent/web.py (+ server.py, base.py)\",\"mechanism\":\"Framework web = Flask (application = Flask(__name__)), ~200 routes @application.route, un worker RQ par Procfile/honcho, config locale config.json. Auth = @a…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "mine:bench-pilot",
+      "phaseIndex": 1,
+      "phaseTitle": "Mine",
+      "agentId": "aa122b844177f41cf",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1793150537815,
+      "queuedAt": 1793150537783,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "bench : réutilisable tel quel comme couche d'invocation — L…",
+      "promptPreview": "Contexte projet : LaStarter v2 = suite collaborative souveraine open source 100 % Frappe : framework Frappe (MIT) comme socle, apps Frappe comme briques épinglées, Frappe = IdP OIDC universel (un site identité émet les identités pour toutes les apps), 1 client = 1 site Frappe sur un bench mutualisé, CLI + catalogue de déploiement, plateforme cloud LaStarter inspirée de Frappe Cloud à terme. Tous l…",
+      "promptFramed": true,
+      "lastProgressAt": 1793151066966,
+      "tokens": 100472,
+      "toolCalls": 43,
+      "durationMs": 528511,
+      "resultPreview": "{\"verdict\":\"bench : réutilisable tel quel comme couche d'invocation — LaStarter pilote directement `<venv>/bin/python -m frappe.utils.bench_helper` (astuce pilot, pas besoin du CLI bench au runtime) avec les flags vérifiés de new-site (--admin-password --force --install-app multi --source-sql --db-root-* --mariadb-user-host-login-scope --setup-db --set-default), restore (--with-*-files --encryptio…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "mine:deploy-oidc",
+      "phaseIndex": 1,
+      "phaseTitle": "Mine",
+      "agentId": "a8cfb7d44901c8b08",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1793150537815,
+      "queuedAt": 1793150537784,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Le câblage OIDC inter-sites sans un seul clic dans le Desk …",
+      "promptPreview": "Contexte projet : LaStarter v2 = suite collaborative souveraine open source 100 % Frappe : framework Frappe (MIT) comme socle, apps Frappe comme briques épinglées, Frappe = IdP OIDC universel (un site identité émet les identités pour toutes les apps), 1 client = 1 site Frappe sur un bench mutualisé, CLI + catalogue de déploiement, plateforme cloud LaStarter inspirée de Frappe Cloud à terme. Tous l…",
+      "promptFramed": true,
+      "lastProgressAt": 1793151347057,
+      "tokens": 132847,
+      "toolCalls": 67,
+      "durationMs": 808603,
+      "resultPreview": "{\"findings\":[{\"topic\":\"frappe_docker compose.yaml de base : variables d'environnement réellement consommées\",\"repo\":\"frappe_docker\",\"path\":\"C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/frappe_docker/compose.yaml\",\"mechanism\":\"Le service `configurator` (run-once) écrit le common_site_config via `bench set-config -g` à partir des env DB_HOST, DB_PORT, REDIS_CACHE, REDIS_QUEUE, SOCKETI…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "mine:carte-236",
+      "phaseIndex": 1,
+      "phaseTitle": "Mine",
+      "agentId": "a9edcf86329997ced",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1793150537815,
+      "queuedAt": 1793150537784,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "QUESTION CENTRALE (déploiement Frappe Cloud de bout en bout…",
+      "promptPreview": "Contexte projet : LaStarter v2 = suite collaborative souveraine open source 100 % Frappe : framework Frappe (MIT) comme socle, apps Frappe comme briques épinglées, Frappe = IdP OIDC universel (un site identité émet les identités pour toutes les apps), 1 client = 1 site Frappe sur un bench mutualisé, CLI + catalogue de déploiement, plateforme cloud LaStarter inspirée de Frappe Cloud à terme. Tous l…",
+      "promptFramed": true,
+      "lastProgressAt": 1793151037956,
+      "tokens": 88151,
+      "toolCalls": 29,
+      "durationMs": 499502,
+      "resultPreview": "{\"findings\":[{\"topic\":\"Point 1 - sync d'appartenance cross-app\",\"repo\":\"raven_integration\",\"path\":\"C:/Users/Bastien/Documents/Projects/LaStarterProject/frappe/raven_integration/README.md\",\"mechanism\":\"App Python qui garde l'appartenance aux workspaces/canaux Raven synchrone avec des règles déclarées par n'importe quelle app Frappe : une app hôte s'enregistre via le hook `raven_membership_providers…"
+    }
+  ],
+  "totalTokens": 546451,
+  "totalToolCalls": 253
+}
