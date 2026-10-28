@@ -184,3 +184,19 @@ Pieges de l'automatisation consignes :
 - le service worker de helpdesk (registerSW.js) peut servir du vieux
   contenu au navigateur : deinstaller le SW + vider les donnees du site
   apres un reset serveur.
+
+## Auto-nettoyage navigateur : en-tete Clear-Site-Data (28/10, soiree 3)
+
+La boucle de Bastien persistait car son navigateur relisait un boot en
+cache (localStorage + service worker helpdesk registerSW.js) alors que le
+serveur servait un boot sain. Solution serveur : en-tete Clear-Site-Data
+"cache, storage, serviceWorkers" sur toutes les reponses du frontal —
+le navigateur du visiteur se vide tout seul des son prochain chargement.
+Implementation durable : template nginx edite
+(poc/nginx-template/frappe.conf.template, en-tete ajoute apres le vrai
+bloc server) monte en lecture seule sur /templates/nginx/frappe.conf.template.
+Pieges : le substring "server {" matche AUSSI "upstream socketio-server {"
+(inserrer par regex ^server {) ; MSYS_NO_PATHCONV=1 casse le chemin -f du
+compose dans la meme commande (utiliser docker exec direct) ; docker cp
+vers /etc/nginx cree un fichier que l'entrypoint ne peut plus ecrire
+(crash-loop, reparer par --force-recreate).

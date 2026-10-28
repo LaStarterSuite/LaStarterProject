@@ -147,7 +147,13 @@ services:
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       PROXY_READ_TIMEOUT: 120
       CLIENT_MAX_BODY_SIZE: 50m
-    volumes: *default_volumes
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+      # Template nginx avec en-tete Clear-Site-Data : le navigateur d'un
+      # visiteur ayant connu la boucle setup-wizard se vide tout seul
+      # (cache, localStorage, service worker de helpdesk).
+      - ./nginx-template/frappe.conf.template:/templates/nginx/frappe.conf.template:ro
     ports:
       - "80:8080"
 
