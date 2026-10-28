@@ -136,3 +136,30 @@ Pieges semis : CRM Lead exige first_name ; en lms 2.63 les doctypes sont
 une erreur de module trompeuse) ; Raven ajoute automatiquement le createur
 comme admin de l'espace (membre refuse en doublon = normal) et prefixe les
 canaux avec l'espace (lastarter-general).
+
+## Boucle setup-wizard (2e forme, 28/10 soir 2)
+
+Symptome : /desk redirige en boucle vers /desk/build/setup-wizard/0 (route
+assemblee par le client, INEXISTANTE dans tout le code serveur). Cause : une
+ligne DefaultValue setup_complete="0" (parent __default) infectait
+bootinfo.defaults pendant que sysdefaults.setup_complete restait vrai ; le
+routeur du desk et l'assistant lisaient des valeurs contradictoires et se
+renvoyaient la balle (wizard -> /apps -> 301 -> /desk -> wizard). Present sur
+LES DEUX sites. Correctif : supprimer la ligne (frappe.db.delete DefaultValue),
+frappe.clear_cache, puis RE-LOGIN. Verifie en navigateur connecte :
+frappe.boot.setup_complete = true, desk stable. A retenir pour
+lastarter_core : apres tout semis de setup, controler l'absence de
+DefaultValue setup_complete.
+
+## Comptes (etat final du 28/10 soir)
+
+- admin@example.com / admin-LaStarter-2026 : VRAI compte admin (System
+  Manager + rôles Manager), les deux sites, SSO compris. LA page de login
+  exige un format email : c'est CE compte qu'il faut utiliser.
+- Administrator / admin : marche uniquement via API (son identite de
+  connexion est son NOM, pas son email) ; la page de login le refuse.
+- alice@example.com / poc-password-1234 : tous rôles + System Manager
+  (ajoute le soir, pour supprimer les erreurs ERPNext comme
+  « Accounting Dimension », lisible par Accounts Manager/System Manager
+  uniquement).
+- demo@example.com / demo-password-1234 : visiteur de demonstration.
