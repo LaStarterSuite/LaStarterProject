@@ -1,0 +1,20 @@
+# Dépôts clonés et références v1 (dépôts git imbriqués, régénérables)
+/frappe/
+/examples/
+/lastarter/
+
+# Outils d'agents installés localement (npx skills add frappe/skills)
+/skills/
+/.agents/
+/.claude/skills/
+
+# Artefacts locaux et runtime
+/.runtime/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Verrou des skills agents
+/skills-lock.json
