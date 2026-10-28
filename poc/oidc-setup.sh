@@ -73,5 +73,5 @@ echo "== 3. discovery OIDC de l'IdP (vérification) =="
 # En v16 le endpoint exige une session (pas allow_guest) : 403 attendu hors
 # login — le preset Frappe utilise les URLs directes, pas la discovery.
 curl -s -o /dev/null -w "get_openid_configuration [HTTP %{http_code}]\n" \
-  "http://id.localhost:8081/api/method/frappe.integrations.oauth2.get_openid_configuration"
+  "http://id.localhost/api/method/frappe.integrations.oauth2.get_openid_configuration"
 echo "== Terminé =="

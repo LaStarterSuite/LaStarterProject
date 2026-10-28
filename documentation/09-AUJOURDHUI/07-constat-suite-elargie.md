@@ -163,3 +163,24 @@ DefaultValue setup_complete.
   « Accounting Dimension », lisible par Accounts Manager/System Manager
   uniquement).
 - demo@example.com / demo-password-1234 : visiteur de demonstration.
+
+## Reset complet + provisionnement automatise (28/10, soiree 3)
+
+Sur demande de Bastien (etat trop pollue), remise a zero totale via le
+nouveau script poc/reset-and-provision.sh : down -v (volumes detruits),
+recration des deux sites, installation des 8 apps restantes, marqueurs de
+setup APRES les installs, OIDC, utilisateurs (admin/alice/bob/demo),
+references ERP/HR (Gender, Warehouse Type, Company, Employee), wiki publie,
+donnees de demonstration, verification finale. Resultat : tout vert (login
+200, /docs 302, /all-products 200, aucune DefaultValue polluee).
+
+Pieges de l'automatisation consignes :
+- create-sites ecrit sites/<site>/site_config.json TOT alors que
+  l'installation des apps continue : attendre la SORTIE du conteneur
+  (docker inspect poc-create-sites-1 State.Status/ExitCode ; docker
+  compose ps --format template ne rend rien) + precondition list-apps
+  (frappe, crm, helpdesk) avant toute autre commande ;
+- les pipes (| tail) sur les install-app masquent les codes de sortie ;
+- le service worker de helpdesk (registerSW.js) peut servir du vieux
+  contenu au navigateur : deinstaller le SW + vider les donnees du site
+  apres un reset serveur.
