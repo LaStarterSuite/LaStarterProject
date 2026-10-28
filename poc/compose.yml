@@ -237,21 +237,14 @@ services:
       configurator:
         condition: service_completed_successfully
 
-  mailpit:
-    image: axllent/mailpit:latest
-    networks:
-      - frappe_network
-    deploy: *default_deploy
-    ports:
-      # UI web : http://localhost:8025 — SMTP : 1025
-      - "8025:8025"
-      - "1025:1025"
-
   stalwart:
     image: stalwartlabs/stalwart:latest
     networks:
       - frappe_network
     deploy: *default_deploy
+    environment:
+      # Epingle l admin de recuperation : complete le bootstrap sans UI
+      STALWART_RECOVERY_ADMIN: "admin:AbezsvFiQCp48FtL"
     ports:
       # Admin + JMAP : http://localhost:8081 — IMAP 143/993 — SMTP 25
       - "8081:8080"

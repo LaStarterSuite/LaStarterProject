@@ -284,3 +284,29 @@ qui n'existe pas si la requete a echoue avant -> AttributeError pendant la
 gestion d'erreur -> reponse VIDE (page blanche) au lieu de l'erreur
 propre. Candidat PR upstream : initialiser is_ajax = False des le debut
 de la requete.
+
+## Stalwart operationnel : serveur mail officiel configure par API (28/10, soiree 5, fin)
+
+Mailpit retire a la demande de Bastien (evier de dev, pas une interface).
+Stack mail retenue : STALWART (leur serveur officiel) dans le compose,
+configure ENTIEREMENT PAR API sans navigateur :
+1. Bootstrap complet via JMAP : x:Bootstrap/set (singleton) avec
+   defaultHostname mail.lastarter.test, defaultDomain lastarter.test,
+   RocksDB, annuaire interne, DNS manuel, sans ACME (local).
+2. Redemarrage du conteneur (le bootstrap persiste jusqu au restart).
+3. Reponse du Bootstrap/set = identifiants admin FINAUX captures :
+   admin@lastarter.test / dc6XhMYmm5AgAGUE (affiches une seule fois).
+4. Apres restart : SMTP 25 vivant (220 mail.lastarter.test), JMAP 200.
+5. Boite alice creee via x:Account/set (fields : name=alice SANS domaine,
+   domainId=b, credentials Password) ; mot de passe politique Stalwart
+   (8+ caracteres) : Alice-LaStarter-2026.
+6. Preuve de bout en bout : email admin@lastarter.test ->
+   alice@lastarter.test (Email Queue Sent) present dans la boite INBOX
+   d alice (JMAP Email/query en alice).
+Notes : les methodes de gestion Stalwart sont prefixees x: (x:Domain/
+query, x:Account/set, x:Bootstrap/set) ; l API /api/schema est gzip ;
+System Settings.password_minimum_score = 0 ne concerne que le POC.
+Le CLI telecharge par l app mail est INUTILISABLE contre ce serveur
+(schema desynchronise, variant sieve inconnu du CLI).
+Le client Mail (UI) reste le projet fork-suite (le depot archive est un
+fossile, suite/mail est vivant) — voir section precedente.

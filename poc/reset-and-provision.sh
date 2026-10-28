@@ -154,8 +154,8 @@ seed crm.localhost '{"doctype":"LMS Course","title":"Prise en main de la suite",
 seed crm.localhost '{"doctype":"Course Chapter","course":"prise-en-main-de-la-suite","title":"Bienvenue"}'
 CH=$($DC exec -T backend bench --site crm.localhost execute frappe.db.exists --args '["Course Chapter", {"course": "prise-en-main-de-la-suite", "title": "Bienvenue"}]')
 seed crm.localhost '{"doctype":"Course Lesson","chapter":"'"$CH"'","title":"Votre premier tour","body":"<p>Bienvenue dans votre suite collaborative. Ouvrez le CRM et creez un contact, puis discutez dans Raven.</p>"}'
-echo "── Email Account (envoi via Mailpit, demo locale)"
-seed crm.localhost '{"doctype":"Email Account","email_account_name":"Demo Mailpit","email_id":"demo@lastarter.local","enable_outgoing":1,"smtp_server":"mailpit","use_tls":0,"smtp_port":1025,"default_outgoing":1,"no_smtp_authentication":1}'
+echo "── Email Account (SMTP via Stalwart, demo locale)"
+seed crm.localhost '{"doctype":"Email Account","email_account_name":"Stalwart Local","email_id":"admin@lastarter.test","enable_outgoing":1,"smtp_server":"stalwart","use_tls":0,"smtp_port":25,"default_outgoing":1,"no_smtp_authentication":1}'
 
 echo "════════ PHASE 10 : verification finale ════════"
 echo -n "raven espaces: "; $DC exec -T backend bench --site crm.localhost execute frappe.db.count --args '["Raven Workspace"]'
