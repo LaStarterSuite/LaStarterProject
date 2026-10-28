@@ -65,3 +65,9 @@
 - Épinglage strict, gate licence à chaque bump, jamais main/latest.
 - Contribuer amont (les skills fix-issue/ship-it) avant de diverger.
 - Pièges machine : `08-HISTORIQUE/04-machines-pieges.md`.
+
+## 2026-10-28 (apres-midi) : suite elargie
+
+- Image 13 apps, 12 utilisables derriere le SSO, FR par defaut. ERPNext + HRMS + Webshop + Builder verifies au navigateur (voir 07-constat-suite-elargie.md).
+- Drive (packaging pnpm casse) et Gameplan (import v16 non fusionne) bloques AMONT : a re-surveiller, ne pas hacker.
+- Prochaine etape : lastarter_core (semis des donnees de reference, installation app par app avec ses regles de roles, eleveurs OIDC).

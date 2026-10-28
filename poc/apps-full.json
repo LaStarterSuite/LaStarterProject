@@ -30,5 +30,25 @@
   {
     "url": "https://github.com/frappe/payments",
     "branch": "version-16"
+  },
+  {
+    "url": "https://github.com/frappe/erpnext",
+    "branch": "version-16"
+  },
+  {
+    "url": "https://github.com/frappe/hrms",
+    "branch": "version-16"
+  },
+  {
+    "url": "https://github.com/frappe/webshop",
+    "branch": "version-16"
+  },
+  {
+    "url": "https://github.com/frappe/gameplan",
+    "branch": "main"
+  },
+  {
+    "url": "https://github.com/frappe/builder",
+    "branch": "develop"
   }
 ]
