@@ -252,3 +252,35 @@ suffit pas ; verifier par frappe.has_permission(doctype, user=...).
   de demo attendra une vraie boite (IMAP du client) ou un autre serveur.
 - Le flush de la file (frappe.email.queue.flush) livre immediatement ;
   sinon les workers prennent l'email a leur rythme.
+
+## Mail v16 : portage impossible en l'etat, app desinstallee (28/10, soiree 5, suite)
+
+L'app mail (0.2.1, clone du depot archive) s'installe mais ne fonctionne
+pas sur v16 : page blanche. Deux incompatibilites prouvees :
+1. les workers gunicorn ne rechargent pas l'app apres install (bench
+   restart requis) puis AttributeError is_ajax sur les requetes API ;
+2. le binaire stalwart-cli telecharge par l'app ne comprend pas le schema
+   du Stalwart courant (unknown variant 'sieve') : desynchronisation
+   CLI/serveur.
+D'ou desinstallation propre (retour aux 14 apps saines, desk verifie 200).
+
+## Comparaison demandee par Bastien : archive vs suite
+
+- frappe/mail (archive) : dernier commit 2026-08-10, gelee depuis.
+- frappe/suite, dossier suite/mail : commits du 2026-10-23 (fix + feat
+  mail) : le code VIVANT est dans suite, 2,5 mois plus frais.
+Conclusion : les deux codes bases ont DIVERGE — la base a reprendre est
+suite/mail, pas le fossil archive. Plan de revival pour l'org LaStarter :
+forker frappe/suite, suivre son evolution, extraire mail en app autonome
+quand il stabilise (ou maintenir l'extraction), brancher sur notre
+Stalwart. Stalwart reste dans la pile (il servira aussi la reception
+IMAP reelle via Email Account).
+
+## Bug amont decouvert au passage (candidat contribution)
+
+frappe v16.54 : app.py:199 pose frappe.local.is_ajax APRES certains chemins
+seulement ; le gestionnaire d'erreurs (app.py:366) lit frappe.local.is_ajax
+qui n'existe pas si la requete a echoue avant -> AttributeError pendant la
+gestion d'erreur -> reponse VIDE (page blanche) au lieu de l'erreur
+propre. Candidat PR upstream : initialiser is_ajax = False des le debut
+de la requete.

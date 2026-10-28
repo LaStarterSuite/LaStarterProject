@@ -247,8 +247,23 @@ services:
       - "8025:8025"
       - "1025:1025"
 
+  stalwart:
+    image: stalwartlabs/stalwart:latest
+    networks:
+      - frappe_network
+    deploy: *default_deploy
+    ports:
+      # Admin + JMAP : http://localhost:8081 — IMAP 143/993 — SMTP 25
+      - "8081:8080"
+      - "143:143"
+      - "993:993"
+      - "25:25"
+    volumes:
+      - stalwart-data:/opt/stalwart
+
 volumes:
   db-data:
+  stalwart-data:
   redis-queue-data:
   sites:
   logs:
