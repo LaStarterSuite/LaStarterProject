@@ -94,7 +94,7 @@ seed() { # $1 site, $2 doc JSON ; affiche l'erreur si echec
 }
 
 echo "── admin (crm) : $ADMIN_EMAIL"
-seed crm.localhost '{"doctype":"User","email":"'"$ADMIN_EMAIL"'","first_name":"Admin","new_password":"'"$ADMIN_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"System Manager"},{"role":"Accounts Manager"},{"role":"Sales Manager"},{"role":"Stock Manager"},{"role":"HR Manager"},{"role":"Desk User"},{"role":"Raven User"},{"role":"LMS Student"},{"role":"Wiki User"},{"role":"Insights Admin"}]}'
+seed crm.localhost '{"doctype":"User","email":"'"$ADMIN_EMAIL"'","first_name":"Admin","new_password":"'"$ADMIN_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"System Manager"},{"role":"Accounts Manager"},{"role":"Accounts User"},{"role":"Sales Manager"},{"role":"Sales User"},{"role":"Purchase Manager"},{"role":"Purchase User"},{"role":"Stock Manager"},{"role":"Stock User"},{"role":"HR Manager"},{"role":"Projects User"},{"role":"Employee"},{"role":"Desk User"},{"role":"Raven User"},{"role":"LMS Student"},{"role":"Wiki User"},{"role":"Insights Admin"}]}'
 echo "── admin (id) : $ADMIN_EMAIL"
 seed id.localhost '{"doctype":"User","email":"'"$ADMIN_EMAIL"'","first_name":"Admin","new_password":"'"$ADMIN_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"Desk User"}]}'
 echo "── alice (crm)"

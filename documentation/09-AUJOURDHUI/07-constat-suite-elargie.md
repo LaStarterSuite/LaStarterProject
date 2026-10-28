@@ -221,3 +221,17 @@ sites (valeur exacte du wizard complete). Verifie : boot.home_page =
 Le script de provisionnement pose desormais le defaut workspace apres
 les installs. Dernier piege : le substring "server {" matche aussi
 "upstream socketio-server {" (template nginx).
+
+## Permissions ERPNext (28/10, soiree 4)
+
+Erreur « Autorisation insuffisante pour Purchase Order » sur
+/desk/setup/home : cause — System Manager ne couvre PAS tous les
+doctypes ERPNext ; Purchase Order n'accorde la lecture qu'a Purchase
+Manager, Purchase User et Stock User (DocPerm verifies). Alice passait
+via Stock User + System Manager ; admin@example.com n'avait ni Purchase
+User/Manager ni Stock User. Corrige : roles metier explicites ajoutes a
+admin (Purchase Manager/User, Stock User, Accounts User, Sales User,
+Projects User, Employee). Le script de provisionnement integre desormais
+la liste complete. Lecon lastarter_core : pour un compte « tout voir »,
+attribuer les roles metier User+Manager de chaque app, System Manager ne
+suffit pas ; verifier par frappe.has_permission(doctype, user=...).
