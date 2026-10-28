@@ -12,9 +12,10 @@ cd "$ROOT" || exit 1
 DC="docker compose -f $ROOT/poc/compose.yml"
 
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
-ADMIN_PWD="${ADMIN_PWD:-admin-LaStarter-2026}"
-ALICE_PWD="${ALICE_PWD:-poc-password-1234}"
-DEMO_PWD="${DEMO_PWD:-demo-password-1234}"
+ADMIN_PWD="${ADMIN_PWD:-admin}"
+ALICE_PWD="${ALICE_PWD:-Alice}"
+DEMO_PWD="${DEMO_PWD:-demo}"
+BOB_PWD="${BOB_PWD:-bob}"
 
 echo "════════ PHASE 1 : destruction des volumes ════════"
 $DC down -v --remove-orphans 2>&1 | tail -3
@@ -65,6 +66,9 @@ $DC exec -T backend bench --site crm.localhost execute frappe.db.set_value --arg
 $DC exec -T backend bench --site id.localhost execute frappe.db.set_value --args '["Installed Application", {"app_name": ["in", ["frappe"]]}, "is_setup_complete", 1]' >/dev/null
 $DC exec -T backend bench --site crm.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":{"language":"fr","setup_complete":1}}' >/dev/null && echo "System Settings crm : fr + setup_complete"
 $DC exec -T backend bench --site id.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":{"language":"fr","setup_complete":1}}' >/dev/null && echo "System Settings id : fr + setup_complete"
+# Mots de passe simples (demande de Bastien ; POC local uniquement)
+$DC exec -T backend bench --site crm.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":"password_minimum_score","value":0}' >/dev/null && echo "password_minimum_score crm : 0"
+$DC exec -T backend bench --site id.localhost execute frappe.db.set_single_value --kwargs '{"doctype":"System Settings","fieldname":"password_minimum_score","value":0}' >/dev/null && echo "password_minimum_score id : 0"
 # Controle anti-pollution : DefaultValue setup_complete doit etre ABSENT
 POLL=$($DC exec -T backend bench --site crm.localhost execute frappe.db.get_all --kwargs '{"doctype":"DefaultValue","filters":{"defkey":"setup_complete"},"fields":["name"]}')
 if [ "$POLL" = "[]" ] || [ -z "$POLL" ]; then echo "DefaultValue setup_complete : propre"; else
@@ -94,7 +98,7 @@ seed crm.localhost '{"doctype":"User","email":"alice@example.com","first_name":"
 echo "── alice (id)"
 seed id.localhost '{"doctype":"User","email":"alice@example.com","first_name":"alice","last_name":"demo","new_password":"'"$ALICE_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"Desk User"}]}'
 echo "── bob (id, JIT a observer)"
-seed id.localhost '{"doctype":"User","email":"bob@example.com","first_name":"bob","new_password":"'"$ALICE_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"Desk User"}]}'
+seed id.localhost '{"doctype":"User","email":"bob@example.com","first_name":"bob","new_password":"'"$BOB_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"Desk User"}]}'
 echo "── demo visiteur (crm)"
 seed crm.localhost '{"doctype":"User","email":"demo@example.com","first_name":"Visiteur","new_password":"'"$DEMO_PWD"'","language":"fr","user_type":"System User","send_welcome_email":0,"roles":[{"role":"Desk User"},{"role":"Sales User"},{"role":"Agent"},{"role":"Raven User"},{"role":"LMS Student"}]}'
 echo "── demo visiteur (id)"

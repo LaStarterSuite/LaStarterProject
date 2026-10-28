@@ -153,16 +153,16 @@ DefaultValue setup_complete.
 
 ## Comptes (etat final du 28/10 soir)
 
-- admin@example.com / admin-LaStarter-2026 : VRAI compte admin (System
+- admin@example.com / admin : VRAI compte admin (mot de passe simple possible : politique password_minimum_score = 0 posee le 28/10 soir) (System
   Manager + rôles Manager), les deux sites, SSO compris. LA page de login
   exige un format email : c'est CE compte qu'il faut utiliser.
 - Administrator / admin : marche uniquement via API (son identite de
   connexion est son NOM, pas son email) ; la page de login le refuse.
-- alice@example.com / poc-password-1234 : tous rôles + System Manager
+- alice@example.com / Alice : tous rôles + System Manager
   (ajoute le soir, pour supprimer les erreurs ERPNext comme
   « Accounting Dimension », lisible par Accounts Manager/System Manager
   uniquement).
-- demo@example.com / demo-password-1234 : visiteur de demonstration.
+- demo@example.com / demo : visiteur de demonstration. Bob : bob (IdP). Mot de passe simples voulu par Bastien (POC local uniquement, JAMAIS en production).
 
 ## Reset complet + provisionnement automatise (28/10, soiree 3)
 
