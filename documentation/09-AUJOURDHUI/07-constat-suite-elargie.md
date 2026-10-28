@@ -310,3 +310,17 @@ Le CLI telecharge par l app mail est INUTILISABLE contre ce serveur
 (schema desynchronise, variant sieve inconnu du CLI).
 Le client Mail (UI) reste le projet fork-suite (le depot archive est un
 fossile, suite/mail est vivant) — voir section precedente.
+
+## Bilan final de la soiree mail (28/10)
+
+- Stalwart restaure et stable (config minimal connu-bon reinstalle via
+  stop + docker cp + start ; le conteneur bouclait sur un config.json
+  vide). SMTP 25 + JMAP 8080 vivants. IMAP non configure : le validateur
+  x:NetworkListener rejette TOUT format de bind (bug amont de l API WIP
+  Stalwart) ; deux voies restantes : l interface admin web (2 clics) ou
+  l edition du config.json (format listeners a documenter).
+- Comptes : admin@lastarter.test / dc6XhMYmm5AgAGUE (admin final),
+  alice@lastarter.test / alice-LaStarter-2026 (boite avec INBOX).
+- Email Account Frappe : « Stalwart Local » (SMTP stalwart:25, envoi
+  par defaut) — le test interne est livre (Email Queue Sent).
+- Le client Mail reste le chantier fork-suite (voir section Mail v16).
