@@ -94,3 +94,28 @@ metier attendu).
 
 poc/apps-full.json = 13 apps (drive retire). Commits POC/architecture
 precedes ; commit de ce constat a suivre.
+
+## Correctifs du soir (28/10, session 2)
+
+- **Temps reel casse partout (bandeau Raven « Realtime events aren't
+  working »)** : cause racine lue dans le code — l'authentification du
+  serveur temps reel (apps/frappe/realtime/middlewares/authenticate.js)
+  fait un fetch vers l'ORIGINE du client (http://crm.localhost/api/...) ;
+  le conteneur websocket ne resolvait pas *.localhost (glibc) -> chaque
+  connexion rejetee « Unauthorized: TypeError: fetch failed ». Correctif :
+  extra_hosts id.localhost/crm.localhost -> host-gateway sur le service
+  websocket du compose (symetrique du backend). Verifie : handshake avec
+  sid en 200, zero erreur console apres correction, sockets Raven actifs.
+- **Interface administrateur en francais** : User Administrator passe en
+  fr sur les deux sites.
+- **Raven premiere main** : alice a le role mais pas d'espace de travail :
+  creer le workspace en admin (Raven -> New Workspace) puis l'ajouter.
+- **Permissions (question de Bastien)** : tout se gere depuis le bureau
+  central : doctype User (table roles) + roles par app (Raven User,
+  LMS Student...) ; les pages d'admin des apps renvoient au User du desk
+  maitre et exigent System Manager pour l'editer.
+- **Criblage ecosysteme + plan d'hebergement** : voir
+  documentation/04-CLOUD/05-plan-infra-lastarter.md (18 depots veriffies ;
+  meet archive au profit de frappe/suite ; grove recycle en plateforme IA ;
+  pilot = gestionnaire de serveurs dedies ; aucune app de page de statut
+  dans l'org frappe).

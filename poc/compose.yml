@@ -218,6 +218,13 @@ services:
     image: lasarter-bench:full
     networks:
       - frappe_network
+    # L'authentification des sockets fait un fetch vers l'origine du client
+    # (http://<site>.localhost) : sans ces entrées, le conteneur ne résout
+    # pas les *.localhost et chaque connexion recoit « Unauthorized: fetch
+    # failed » (bandeau Raven « Realtime events aren't working »).
+    extra_hosts:
+      - "id.localhost:host-gateway"
+      - "crm.localhost:host-gateway"
     deploy: *default_deploy
     command:
       - node
