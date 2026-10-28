@@ -4,22 +4,27 @@
 
 ## Étape 0 — Mise en place (½ journée)
 
-- [ ] Installer les skills officielles : `npx skills add frappe/skills`
+- [x] Installer les skills officielles : `npx skills add frappe/skills` (fait le 2026-10-28)
 - [ ] Parcourir les dépôts clonés (`../frappe/`) avec `frappe-app-dev` comme
       base de connaissance.
 - [ ] Re-générer l'inventaire (dates fraîches) — voir `01-etat-des-clones.md`.
 
 ## Étape 1 — POC trancheur (1 journée) — `02-poc-plan.md`
 
-- [ ] frappe_docker opérationnel (port 8081 côté hôte).
-- [ ] Site identité + site client (CRM + Helpdesk), SSO OIDC entre eux.
-- [ ] (Bonus) Social Login Key → Keycloak 8180.
-- [ ] Constat écrit → mise à jour de cette documentation.
+- [x] frappe_docker opérationnel (passerelle sur le port 80 : le nginx
+      frappe_docker dérive les URLs sans port, voir constat POC).
+- [x] Site identité + site client (CRM + Helpdesk), SSO OIDC entre eux
+      (prouvé au navigateur le 2026-10-28, constat : `05-constat-poc.md`).
+- [ ] (Bonus) Social Login Key → Keycloak 8180 (conteneur à recréer depuis
+      le workspace Convex archivé).
+- [x] Constat écrit → `05-constat-poc.md`.
 
 ## Étape 2 — Vérifications ouvertes (½ journée)
 
-- [ ] **2FA** : localiser/éliminer le doute dans v17 (module absent du
-      checkout audité). Bloquant pour la prod de l'IdP.
+- [x] **2FA** : RÉSOLU le 2026-10-28. Le module existe dans la v16 cible :
+      `frappe/twofactor.py` (TOTP via pyotp, provisioning QR, `should_run_2fa`
+      branché sur le login). Le doute venait du checkout v17-dev où il n'avait
+      pas été localisé ; à revérifier seulement au moment de la montée v17.
 - [ ] Durées de vie des tokens OAuth provider (expiration/refresh).
 - [ ] Test de charge léger : 1 bench, N sites (mesurer la densité).
 

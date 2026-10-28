@@ -5,8 +5,8 @@
 # toutes ses URLs publiques sans port (redirect_uri OIDC compris) — la
 # passerelle DOIT écouter sur 80 pour que les URLs dérivées soient valides.
 #
-# Prérequis : image lasarter-bench:poc construite depuis poc/apps.json
-# (voir poc/build.sh).
+# Prérequis : image construite par poc/build.sh (APPS_JSON=poc/apps.json
+# pour le POC minimal, poc/apps-full.json pour l'architecture complète).
 
 x-default-deploy: &default_deploy
   restart_policy:
@@ -18,7 +18,7 @@ x-default-volumes: &default_volumes
 
 services:
   backend:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy: *default_deploy
@@ -39,7 +39,7 @@ services:
         condition: service_completed_successfully
 
   configurator:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy:
@@ -66,7 +66,7 @@ services:
     volumes: *default_volumes
 
   create-sites:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy:
@@ -128,7 +128,7 @@ services:
       - db-data:/var/lib/mysql
 
   frontend:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     depends_on:
@@ -152,7 +152,7 @@ services:
       - "80:8080"
 
   queue-long:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy: *default_deploy
@@ -170,7 +170,7 @@ services:
         condition: service_completed_successfully
 
   queue-short:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy: *default_deploy
@@ -202,7 +202,7 @@ services:
     deploy: *default_deploy
 
   scheduler:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy: *default_deploy
@@ -215,7 +215,7 @@ services:
         condition: service_completed_successfully
 
   websocket:
-    image: lasarter-bench:poc
+    image: lasarter-bench:full
     networks:
       - frappe_network
     deploy: *default_deploy
