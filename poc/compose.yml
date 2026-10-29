@@ -249,7 +249,7 @@ services:
     deploy: *default_deploy
     environment:
       # Epingle l admin de recuperation : complete le bootstrap sans UI
-      STALWART_RECOVERY_ADMIN: "admin:AbezsvFiQCp48FtL"
+      STALWART_RECOVERY_ADMIN: "admin:ChangeMoi-Stalwart"
       # URL publique annoncee dans la session JMAP (purement env, zero
       # hardcode) : en prod, remplacer par https://mail.<domaine-client>
       STALWART_PUBLIC_URL: "http://stalwart:8080"

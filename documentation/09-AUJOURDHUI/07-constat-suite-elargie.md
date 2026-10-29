@@ -295,11 +295,11 @@ configure ENTIEREMENT PAR API sans navigateur :
    RocksDB, annuaire interne, DNS manuel, sans ACME (local).
 2. Redemarrage du conteneur (le bootstrap persiste jusqu au restart).
 3. Reponse du Bootstrap/set = identifiants admin FINAUX captures :
-   admin@lastarter.test / dc6XhMYmm5AgAGUE (affiches une seule fois).
+   admin@lastarter.test / <mot-de-passe-demo> (affiches une seule fois).
 4. Apres restart : SMTP 25 vivant (220 mail.lastarter.test), JMAP 200.
 5. Boite alice creee via x:Account/set (fields : name=alice SANS domaine,
    domainId=b, credentials Password) ; mot de passe politique Stalwart
-   (8+ caracteres) : Alice-LaStarter-2026.
+   (8+ caracteres) : <mot-de-passe-demo>.
 6. Preuve de bout en bout : email admin@lastarter.test ->
    alice@lastarter.test (Email Queue Sent) present dans la boite INBOX
    d alice (JMAP Email/query en alice).
@@ -319,7 +319,7 @@ fossile, suite/mail est vivant) — voir section precedente.
   x:NetworkListener rejette TOUT format de bind (bug amont de l API WIP
   Stalwart) ; deux voies restantes : l interface admin web (2 clics) ou
   l edition du config.json (format listeners a documenter).
-- Comptes : admin@lastarter.test / dc6XhMYmm5AgAGUE (admin final),
+- Comptes : admin@lastarter.test / <mot-de-passe-demo> (admin final),
   alice@lastarter.test / alice-LaStarter-2026 (boite avec INBOX).
 - Email Account Frappe : « Stalwart Local » (SMTP stalwart:25, envoi
   par defaut) — le test interne est livre (Email Queue Sent).
@@ -489,10 +489,10 @@ compose, avec les mises au point suivantes :
   blocages de la veille (IMAP listener impossible, INBOX absente)
   disparaissent avec le pairage d'ere.
 - Comptes recrees a l identique (meme domaine lastarter.test id=b,
-  memes secrets documentes) : admin@lastarter.test / dc6XhMYmm5AgAGUE
-  (rôle Admin), alice@lastarter.test / Alice-LaStarter-2026.
+  memes secrets documentes) : admin@lastarter.test / <mot-de-passe-demo>
+  (rôle Admin), alice@lastarter.test / <mot-de-passe-demo>.
   Correction : le User Settings Frappe d alice portait
-  alice-LaStarter-2026 (minuscule) — aligne sur Alice-LaStarter-2026.
+  alice-LaStarter-2026 (minuscule) — aligne sur <mot-de-passe-demo>.
 - Preuves : EHLO SMTP 250 depuis le backend ; frappe.sendmail →
   Email Queue Sent (apres frappe.email.queue.flush) → INBOX JMAP d alice
   total 1 ; get_user_info 200 ; get_enabled_domains 200
