@@ -381,3 +381,24 @@ Settings : alice@example.com (alice@lastarter.test) et admin@example.com
 boite. is_jmap_configured = true pour les deux, get_user_info = 200.
 Lecon : apres un DROP de table manuel + migrate, verifier la table via
 MySQLdb direct AVANT de conclure sur les erreurs ORM.
+
+## Etat final verifie (29/10, fin de session mail)
+
+- Desk : 200 stable, boucle morte, 14 apps saines.
+- Mail UI (0.2.1) : installee, frontend compile et SERVI, /mail/login rend
+  le formulaire en francais — MAIS les vues post-login appellent les URLs
+  JMAP annoncees par Stalwart (https://mail.lastarter.test/...) :
+  injoignables depuis le backend. Le correctif = config Stalwart coherente
+  (hostname/listeners) pour que la session annonce des URLs joignables —
+  prochaine session, la trace complete est dans les logs de ce soir.
+- User Settings : alice@example.com et admin@example.com crees (MySQLdb
+  direct apres les echecs ORM : table vide puis 1062 fantomes), champs
+  user/username/app_password/server_url remplis, is_jmap_configured true.
+- Stalwart : SMTP 25 + JMAP 8080 vivants, admin@lastarter.test (dc6XhMYm
+  m5AgAGUE), boite alice@lastarter.test (alice-LaStarter-2026... mot de
+  passe final : le login JMAP true teste avec alice-LaStarter-2026 apres
+  la creation avec alice1234 refuse par la politique 8 caracteres).
+  ATTENTION : le mot de passe JMAP fonctionnel verifie = celui du compte
+  créé en dernier ; en cas de doute, reinitialiser via x:Account/set
+  update credentials (politique 8+ caracteres).
+- Email interne admin -> alice : Email Queue Sent (SMTP Stalwart).
