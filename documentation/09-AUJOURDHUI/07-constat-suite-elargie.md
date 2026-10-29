@@ -324,3 +324,16 @@ fossile, suite/mail est vivant) — voir section precedente.
 - Email Account Frappe : « Stalwart Local » (SMTP stalwart:25, envoi
   par defaut) — le test interne est livre (Email Queue Sent).
 - Le client Mail reste le chantier fork-suite (voir section Mail v16).
+
+## raven_integration : app non publiee (29/10)
+
+Le regle LMS « Raven : synchro des membres par regle » exige l app
+autonome raven_integration. Verifications : aucun depot public chez
+Frappe ni The-Commit-Company (12 repos, aucun avec integr ; recherche
+GitHub generale = faux positifs Sentry). Les hooks LMS sont deja la
+(lms/hooks.py:373 : LMS contribue ses rule types + evaluateur a
+raven_integration ; raven_integration_manager_roles = Moderator) :
+l app existe mais n est pas publiee. Deux voies : demander le depot a
+The-Commit-Company, ou ecrire notre propre pont LMS->Raven dans
+lastarter_core (micro-projet : synchroniser les membres de batchs
+vers des canaux Raven par regle).
