@@ -368,3 +368,16 @@ les URLs annoncees bloquent. Voies de correction (prochaine session) :
 L etat livre ce soir : SMTP interne fonctionnel (Email Account + Email
 Queue Sent), JMAP auth OK, UI Mail servie (assets repares) — le rendu de
 la boite attend le point 1.
+
+## User Settings crees par MySQLdb direct (29/10, fin de session mail)
+
+Les insertions via l ORM Frappe echouaient en 1062 duplicate avec des
+lignes INVISIBLES a get_all (etat incoherent apres les cycles
+desinstall/reinstall + le DROP de table manuel). Resolution : insertion
+directe via MySQLdb dans le venv backend (docker cp du script + env/bin/
+python), fichier probe.py laisse dans poc/ comme reference. Les deux User
+Settings : alice@example.com (alice@lastarter.test) et admin@example.com
+(admin@lastarter.test), app_password = mot de passe Stalwart de chaque
+boite. is_jmap_configured = true pour les deux, get_user_info = 200.
+Lecon : apres un DROP de table manuel + migrate, verifier la table via
+MySQLdb direct AVANT de conclure sur les erreurs ORM.
