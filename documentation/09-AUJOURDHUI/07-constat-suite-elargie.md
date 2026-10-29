@@ -576,3 +576,39 @@ visible (2.63.0 -> 2.68.0). Verification des faits avant d'executer :
 Resultat : lms 2.68.0 en service, migrations crm et id propres, donnees
 de demo intactes (cours, chapitre, lecon, raven, leads), /courses 301
 (redirection normale), tout le reste au vert.
+
+## L icone mail disparue du desk : cause racine Docker Desktop (29/10, apres-midi)
+
+Signalement de Bastien : « l application mail ne fonctionne plus, ya plus
+son icon etc. sur le desk ». Enquete complete, DEUX couches de cause :
+
+1. La fenetre cassee de la recreation (les 500 generaux, deja documentes)
+   — les erreurs mail du journal (get_mailboxes, get_address_books,
+   get_sieve_scripts en 06:07-06:13) datent de LA, elles ont disparu :
+   les memes appels passent maintenant (boites, carnets, sieve 200).
+
+2. LA VRAIE CAUSE DE L ICONE MANQUANTE : le tuile du selecteur v16 vient
+   du hook add_to_apps_screen (mail le declare : route /mail, logo
+   /assets/mail/images/logo.svg) — le logo repondait 404 car les assets
+   mail n existaient PAS dans la vue du conteneur frontend. OR :
+   - le meme chemin existait vu du BACKEND (880 octets, logo.svg present) ;
+   - les deux conteneurs montent le MEME volume nomme poc_sites (JSON des
+     montages verifie) ;
+   - un conteneur auxiliaire montant poc_sites ne voyait PAS assets/mail ;
+   - restart ET force-recreate du frontend ne changeaient rien.
+   Conclusion : bug de WRITE-THROUGH Docker Desktop Windows — les
+   ecritures du backend dans le volume nomme ne traversent pas vers le
+   magasin partage que lit le frontend. La vue backend est un fantome.
+   Piege annexe : les tests `docker run -v poc_sites:/v` etaient
+   silencieusement mutilés par MSYS (le /v converti en chemin Windows) —
+   MSYS_NO_PATHCONV=1 obligatoire sur tout -v et docker cp.
+
+Correctif : copier les assets via l hote DIRECTEMENT DANS le conteneur
+frontend (docker cp backend -> tmp -> frontend, node_modules exclu pour
+son symlink). reinstall-mail.sh mis a jour : l etape 5 copie maintenant
+vers le frontend (le nginx) et le backend. Verifie : logo.svg 200, le
+bundle SPA (AddressBookView-*.js) 200, /mail/login 200, /mail 200 en
+session, get_apps liste mail avec sa route et son logo pour admin ET
+alice. Le hook is_setup_complete de mail n est PAS le coupable (le filtre
+setup-wizard ne s applique qu aux non-System-Manager, et alice voit la
+tuile).

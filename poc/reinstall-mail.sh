@@ -31,8 +31,19 @@ $DC exec -T backend bash -c 'find apps/mail -name __pycache__ -type d -exec rm -
 echo "── 4. bench build --app mail (le bundle vue)"
 $DC exec -T backend bench build --app mail 2>&1 | tail -3
 
-echo "── 5. assets en fichiers réels dans le volume sites"
-$DC exec -T backend bash -c 'rm -rf /home/frappe/frappe-bench/sites/assets/mail && cp -rL /home/frappe/frappe-bench/apps/mail/mail/public /home/frappe/frappe-bench/sites/assets/mail && ls /home/frappe/frappe-bench/sites/assets/mail | head -3'
+echo "── 5. assets en fichiers réels, copiés vers le FRONTEND (nginx)"
+# Piège Docker Desktop Windows : les écritures du backend dans le volume
+# partagé ne sont pas vues par le frontend (bug de write-through). Le
+# nginx du frontend sert /assets : la copie doit passer par l hôte et
+# arriver DANS le conteneur frontend. node_modules (symlink) exclu.
+rm -rf "$ROOT/poc/tmp-assets" && mkdir -p "$ROOT/poc/tmp-assets"
+for SUB in css email frontend images; do
+  MSYS_NO_PATHCONV=1 docker cp "poc-backend-1:/home/frappe/frappe-bench/apps/mail/mail/public/$SUB" "$ROOT/poc/tmp-assets/" 2>/dev/null
+done
+MSYS_NO_PATHCONV=1 docker exec poc-frontend-1 sh -c 'rm -rf /home/frappe/frappe-bench/sites/assets/mail'
+MSYS_NO_PATHCONV=1 docker cp "$ROOT/poc/tmp-assets/." poc-frontend-1:/home/frappe/frappe-bench/sites/assets/mail
+MSYS_NO_PATHCONV=1 docker exec poc-backend-1 sh -c 'rm -rf /home/frappe/frappe-bench/sites/assets/mail && cp -rL /home/frappe/frappe-bench/apps/mail/mail/public /home/frappe/frappe-bench/sites/assets/mail' 2>/dev/null
+rm -rf "$ROOT/poc/tmp-assets"
 
 echo "── 6. restart frontend"
 $DC restart frontend 2>&1 | tail -1
