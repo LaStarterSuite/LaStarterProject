@@ -6,6 +6,11 @@ le site identité et le site bureau, Stalwart pour le mail, HTTPS
 automatique. Zéro outil maison : leurs images, leur Containerfile,
 leurs commandes bench.
 
+> **Le raccourci** : `bash install.sh` à la racine du dépôt fait tout
+> ce document en une commande (questions ou variables d'environnement,
+> idempotent). Ce document détaille chaque étape et sert de référence
+> de dépannage.
+
 ## 0. Prérequis (avant toute commande)
 
 Chez le registrar, sur l'IP du serveur (la commande 1 la détecte) :
