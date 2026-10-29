@@ -11,6 +11,20 @@ leurs commandes bench.
 > idempotent). Ce document détaille chaque étape et sert de référence
 > de dépannage.
 
+## Dimensionnement (pour louer à un client)
+
+| Offre | vCPU | RAM | Disque | Location serveur | Pour qui |
+|---|---|---|---|---|---|
+| Essai / démo | 2 | 4 Go | 40 Go | ~15-25 €/mois | la démo, moins de 10 utilisateurs (le script ajoute du swap pour le build) |
+| Standard PME | 4 | 8 Go | 80 Go | ~30-50 €/mois | 10 à 50 utilisateurs |
+| Confort | 8 | 16 Go | 160 Go | ~60-90 €/mois | 50+ utilisateurs, ERPNext chargé |
+
+Le runtime tiédit tourne autour de 2-3 Go de RAM ; le pic, c'est la
+CONSTRUCTION de l'image (les builds front des apps) — d'où le swap
+automatique du script sur les petites machines, ou le build sur une
+grosse machine et un pull depuis un registre pour les clients serrés.
+La base MariaDB grossit avec l'usage : prévoir le disque large.
+
 ## 0. Prérequis (avant toute commande)
 
 Chez le registrar, sur l'IP du serveur (la commande 1 la détecte) :

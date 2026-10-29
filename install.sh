@@ -65,6 +65,16 @@ RAM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
 [ "$RAM_KB" -lt 3500000 ] && warn "RAM < 3,5 Go : la construction peut échouer."
 FREE_GB=$(df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}')
 [ "$FREE_GB" -lt 20 ] && warn "Disque : ${FREE_GB} Go libres, 20 Go conseillés."
+# sur les petites machines : du swap pour absorber le pic de RAM du build
+if [ "$RAM_KB" -lt 8000000 ] && ! swapon --show 2>/dev/null | grep -q .; then
+  if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    say "RAM < 8 Go : ajout de 4 Go de swap pour la construction de l'image"
+    sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile || true
+  else
+    warn "RAM < 8 Go sans sudo silencieux : ajoute du swap avant le build (fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile)"
+  fi
+fi
+
 for PORT in 80 443; do
   if ss -ltn 2>/dev/null | grep -qE "[:.]$PORT "; then
     die "Le port $PORT est occupé (nginx/apache existant ?)."
