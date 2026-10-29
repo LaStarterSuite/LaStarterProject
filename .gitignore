@@ -19,3 +19,5 @@ Thumbs.db
 # Verrou des skills agents
 /skills-lock.json
 cli/frappe_docker/
+__pycache__/
+*.pyc
