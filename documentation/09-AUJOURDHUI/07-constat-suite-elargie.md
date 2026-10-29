@@ -612,3 +612,40 @@ session, get_apps liste mail avec sa route et son logo pour admin ET
 alice. Le hook is_setup_complete de mail n est PAS le coupable (le filtre
 setup-wizard ne s applique qu aux non-System-Manager, et alice voit la
 tuile).
+
+## Desk par defaut et tuiles filtrees : demandes de Bastien (29/10, soir)
+
+1. « N afficher que les apps auxquelles on a acces » : C EST DEJA LE CAS.
+   Chaque app a tuile declare has_permission dans add_to_apps_screen
+   (crm, helpdesk, erpnext, hrms, insights, raven, lms, builder,
+   telephony, wiki, mail — TOUTES verifiees dans les hooks). get_apps
+   appelle le garde PAR UTILISATEUR. Le garde du builder =
+   builder.api.check_app_permission : Administrator OU has_permission
+   Builder Page en write. La tuile builder dans la liste d alice POURVE
+   que son garde passe pour elle — le 403 qu elle a vu venait de la PAGE
+   cible d open_editor (une route separate, garde propre au builder,
+   quirk amont), pas de la tuile. Son « maintenant j y ai acces » = l
+   etat de roles stabilise (JIT SSO). Rien a coder ; une contribution
+   amont possible : aligner le garde de la page sur celui de la tuile.
+2. « Desk par defaut apres login » : FAIT. Le login renvoie
+   home_page = get_home_page() or /desk (frappe/auth.py:210) ; la chaine
+   de get_home_page lit D ABORD les roles (le premier role du user qui
+   porte un home_page), puis les reglages globaux. Un reglage residuel
+   envoyait les utilisateurs sur helpdesk. Correctif sans fork :
+   Role « Desk User ».home_page = /desk (role porte par tous nos
+   utilisateurs, lu avant tout reglage d app). Verifie : alice, admin et
+   demo renvoient desormais home_page "desk". Persiste dans le reset
+   (reset-and-provision.sh, fin de phase 6). Les clients helpdesk reels
+   (roles HD Customer) garderaient leur page : le levier est par role.
+   L utilisateur peut aussi choisir SA page par defaut : la tuile du
+   selecteur « definir par defaut » ecrit User.default_app.
+3. Domaines (explication, pas de code) : dans Frappe, un SITE = un
+   domaine (plus des alias eventuels), et les APPS sont des routes dans
+   le site (/crm, /helpdesk, /raven...). Une app n a pas son propre
+   domaine au sein d un site. Un sous-domaine par app = un SITE PAR APP
+   (une base chacune, le modele Frappe Cloud), federe par notre SSO.
+   Un alias apps.localhost vers le meme site est possible (domains dans
+   le site_config) mais n apporte rien : meme desk, session cookie
+   separee, re-auth SSO silencieuse. Recommandation : un domaine par
+   site client, le desk en selecteur — exactement la topologie actuelle
+   (id.localhost + crm.localhost).

@@ -111,6 +111,17 @@ echo "── Administrator en francais"
 $DC exec -T backend bench --site crm.localhost execute frappe.client.set_value --kwargs '{"doctype":"User","name":"Administrator","fieldname":"language","value":"fr"}' >/dev/null 2>&1 && echo "    OK crm"
 $DC exec -T backend bench --site id.localhost execute frappe.client.set_value --kwargs '{"doctype":"User","name":"Administrator","fieldname":"language","value":"fr"}' >/dev/null 2>&1 && echo "    OK id"
 
+echo "── Desk par defaut apres login (le role Desk User court-circuite les "
+echo "   reglages d apps : la chaine de resolution lit les roles avant)"
+$DC exec -T backend bench --site crm.localhost execute frappe.db.set_value --args '["Role","Desk User","home_page","/desk"]' >/dev/null
+$DC exec -T backend bench --site crm.localhost execute frappe.db.commit >/dev/null
+$DC exec -T backend bench --site crm.localhost execute frappe.clear_cache >/dev/null
+echo "    Desk User.home_page = /desk (crm)"
+$DC exec -T backend bench --site id.localhost execute frappe.db.set_value --args '["Role","Desk User","home_page","/desk"]' >/dev/null
+$DC exec -T backend bench --site id.localhost execute frappe.db.commit >/dev/null
+$DC exec -T backend bench --site id.localhost execute frappe.clear_cache >/dev/null
+echo "    Desk User.home_page = /desk (id)"
+
 echo "════════ PHASE 7 : donnees de reference ERP/HR ════════"
 echo "── Gender Female"
 seed crm.localhost '{"doctype":"Gender","gender":"Female"}'
