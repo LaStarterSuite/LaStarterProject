@@ -418,3 +418,20 @@ n ont pas leurs boites standard auto-creees.
 La livraison SMTP->Stalwart fonctionne des l acceptation (Email Queue
 Sent) ; la lecture se fait via JMAP (alice : login OK, boites vides
 tant que non provisionnees).
+
+## Verdict final sur les URLs JMAP (29/10, nuit)
+
+Le validateur x:SystemSettings refuse defaultHostname avec port (hostname
+pur uniquement) et le scheme annonce est toujours https : les URLs de
+session JMAP ne peuvent PAS pointer vers le reseau Docker interne sans
+TLS + DNS + certificat. Le cablage complet du client Mail = chantier
+d architecture (prochaine session) :
+1. DNS interne mail.lastarter.test -> le conteneur Stalwart (extra_hosts
+   ou reseau dedie) ;
+2. certificat TLS (auto-signe accepte avec verify=False dans l app, ou
+   une CA locale) ;
+3. ou Stalwart 0.8.x (la version appairee a l app mail 0.2.1, dont le CLI
+   attend le vieux schema) avec sa config toml.
+Le pairage app/serveur est le point cle : l app mail 0.2.1 attend un
+Stalwart 0.8.x, notre conteneur est le latest 1.0 — deux options :
+downgrader Stalwart, ou mettre a jour l app mail depuis suite.
