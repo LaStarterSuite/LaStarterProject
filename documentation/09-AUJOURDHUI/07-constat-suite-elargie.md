@@ -502,3 +502,49 @@ compose, avec les mises au point suivantes :
 - Le /api/schema (gzip) du tag decrit tous les objets x: — la reference
   pour le fork suite. L image n embarque AUCUN config : elle attend le
   fichier monte.
+
+## Mise a jour du bench : analyse puis rebuild de l image (29/10, matin 2)
+
+Demande de Bastien : mettre a jour les apps installees, verifier les
+versions, prendre les nouveautes. Methode : le code du bench vit CUIT dans
+l image (les .git des apps sont supprimes au build officiel) — la mesure
+utile est versions installees + date du build CONTRE tetes de branches +
+dernieres releases du manifeste. Analyse par agents paralleles + verdicts
+adversariaux, puis rebuild avec les memes epinglages de branches.
+
+Resultat (image reconstruite le 29/10 08:33 UTC) :
+- erpnext 16.52.1 -> 16.53.0 (release du 28/10 20:44 UTC ; l image du
+  28/10 11:08 contenait deja l essentiel du delta ; 10 patchs DB benigns ;
+  frappe version-16 = exactement le pairage CI de v16.53.0).
+- raven 3.1.0 -> 3.2.0 (zero patch DB, realtime intact, seeds de demo non
+  touches ; delete:1 donne au role Raven User, gated en code).
+- builder develop du jour (6 commits, deux correctifs + micro-feature chat).
+- HOLD prouves : lms (la release v2.68.0 est taguee sur MAIN = ligne
+  frappe v17 ; notre pin version-16 est le bon branchement, son head n a
+  pas bouge depuis le build) ; hrms (version-16 immobile, 16.52.0 = tete
+  = tag v16.52.0). frappe, crm, helpdesk, wiki, insights, telephony,
+  payments, webshop : deja a jour de leurs branches.
+- Manifeste : The-Commit-Company/raven -> frappe/raven (le depot
+  canonique a change, le redirect GitHub couvrait le clone).
+
+Operations et pieges de la recreeation :
+- L app mail vit HORS volumes (code sur le FS du conteneur) : une
+  recreation d image la perd. Reinstallation scriptee : poc/reinstall-mail.sh
+  (get-app depuis l archive — le dernier commit 0690fd5 PORTE deja le
+  correctif de base /mail du routeur —, patch local hooks via
+  poc/mail-local-fixes.patch, bench build --app mail, assets en fichiers
+  reels, restart frontend).
+- Le bundle construit de l app mail vit dans apps/mail/mail/public (pas
+  frontend/dist) : copier CE dossier vers sites/assets/mail.
+- Apres la recreation, TOUTES les pages 500 alors que la base est saine :
+  les workers gunicorn ont importe le site au boot du conteneur, AVANT que
+  le code mail revienne. Correctif : restart backend + bench clear-cache.
+  (apps.txt du volume contenait deja mail — le configurateur ne rejoue
+  pas ; ce n etait pas lui le coupable.)
+- La migration crm interrompue par le module absent se REJOUE sans risque
+  (idempotente) une fois le code retourne.
+
+Non-regression verte : login 200, /docs 302, /all-products 200,
+id.localhost 200, get_enabled_domains ["lastarter.test"], donnees de demo
+intactes (1 espace raven, 3 leads, tickets), Stalwart v0.16.27 healthz 200.
+Sauvegardes pre-migration des deux sites effectuees.

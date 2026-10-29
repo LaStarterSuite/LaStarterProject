@@ -1,0 +1,30 @@
+From 3962db1c25c440050db11b6d000579d7834ebf97 Mon Sep 17 00:00:00 2001
+From: Bastien Bourez <bourezbastien@gmail.com>
+Date: Thu, 29 Oct 2026 08:35:29 +0100
+Subject: [PATCH] fix: base /mail pour le routeur spa et retrait de la
+ redirection racine
+
+le routeur vue cree l historique sans base, aucune route /mail/* ne
+matchait (app vide) ; la redirection website_redirects / vers /mail
+empechait le desk d etre la page d accueil.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ mail/hooks.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/mail/hooks.py b/mail/hooks.py
+index 9bd8e57..56b6efa 100644
+--- a/mail/hooks.py
++++ b/mail/hooks.py
+@@ -8,7 +8,6 @@ app_license = "agpl-3.0"
+ 
+ 
+ website_redirects = [
+-	{"source": "/", "target": "/mail"},
+ 	{
+ 		"source": "/auth/validate",
+ 		"target": "/api/method/mail.api.auth.validate",
+-- 
+2.56.0.windows.3
+
