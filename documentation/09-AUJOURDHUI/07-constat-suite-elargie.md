@@ -435,3 +435,16 @@ d architecture (prochaine session) :
 Le pairage app/serveur est le point cle : l app mail 0.2.1 attend un
 Stalwart 0.8.x, notre conteneur est le latest 1.0 — deux options :
 downgrader Stalwart, ou mettre a jour l app mail depuis suite.
+
+## Verdict final : l app mail 0.2.1 se contredit elle-meme (29/10)
+
+La demonstration par les appels de l app elle-meme, session admin
+valide : get_user_info retourne le compte admin@lastarter.test avec
+l id "b" ; get_mailboxes avec account_id="b" rejette en 403 (l app
+n autorise pas l id que son propre get_user_info vient de declarer).
+Ajoute aux incompatibilites v16 deja prouvees (le schema CLI/serveur,
+les URLs JMAP annoncees) : l app 0.2.1 n est pas fonctionnelle dans
+notre stack. Le client Mail = chantier fork-suite (la base suite/mail
+est vivante). L etat de la pile : les 14 apps + Stalwart (SMTP/JMAP/
+admin) + les emails internes livres — le client Mail graphique attend
+le chantier fork-suite.
