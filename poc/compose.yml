@@ -238,7 +238,12 @@ services:
         condition: service_completed_successfully
 
   stalwart:
-    image: stalwartlabs/stalwart:latest
+    # Epingle v0.16.27 : l'app Frappe Mail (archivee 10/08/2026) a ete
+    # developpee contre la ligne 0.16 (v0.16.16/17 encadrent exactement le
+    # gel) ; la v1.0 (26/10) a change le schema de gestion (ex. isEnabled
+    # supprime de Domain) et casse le pairage. latest = risque de rupture
+    # silencieuse, jamais en POC.
+    image: stalwartlabs/stalwart:v0.16.27
     networks:
       - frappe_network
     deploy: *default_deploy
@@ -255,10 +260,16 @@ services:
       - "993:993"
       - "25:25"
     volumes:
-      - stalwart-data:/opt/stalwart
+      # Layout v0.16 : la configuration vit dans /etc/stalwart (volume nomme,
+      # amorce avec poc/stalwart-config-minimal.json — le wizard v1.0 y
+      # ecrivait des null que le schema v0.16 refuse sur cacheSize u64),
+      # les donnees dans /var/lib/stalwart.
+      - stalwart-config:/etc/stalwart
+      - stalwart-data:/var/lib/stalwart
 
 volumes:
   db-data:
+  stalwart-config:
   stalwart-data:
   redis-queue-data:
   sites:

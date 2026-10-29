@@ -448,3 +448,57 @@ notre stack. Le client Mail = chantier fork-suite (la base suite/mail
 est vivante). L etat de la pile : les 14 apps + Stalwart (SMTP/JMAP/
 admin) + les emails internes livres — le client Mail graphique attend
 le chantier fork-suite.
+
+## Stalwart aligne sur l app Mail : epinglage v0.16.27 (29/10, matin)
+
+La demande de Bastien : installer le meme Stalwart que ceux que frappe/mail
+et frappe/suite utilisent. Verdict par la frise des releases officielles :
+l app Mail archivee (gel 10/08/2026) a ete ecrite contre la ligne 0.16
+(v0.16.16 du 02/08 et v0.16.17 du 10/08 encadrent le gel) ; la v1.0.0
+(26/10) puis v1.0.1 (28/10) ont change le schema de gestion. Le conteneur
+latest = v1.0.1 : la rupture prouvee (417 « unknown field: isEnabled »
+sur Domain — le champ supprime en v1.0). Correctif : epinglage
+stalwartlabs/stalwart:v0.16.27 (la derniere de la ligne 0.16) dans le
+compose, avec les mises au point suivantes :
+
+- Layout de l image v0.16.27 : VOLUME /etc/stalwart (config) + /var/lib/
+  stalwart (donnees), PAS /opt/stalwart (le layout v1.0). Compose : volume
+  nomme stalwart-config monte sur /etc/stalwart (amorce avec
+  poc/stalwart-config-minimal.json) + stalwart-data sur /var/lib/stalwart.
+- Cause racine du crash au boot « invalid type: null, expected u64 » :
+  le config minimal herite du wizard v1.0 portait cacheSize=null (et
+  poolWorkers=null) ; au tag v0.16.27 RocksDbStore.cacheSize est un u64
+  non Option. Config connu-bon corrigee : path /var/lib/stalwart/,
+  blobSize 4096, bufferSize et cacheSize 134217728. Un config.json ABSENT
+  produit la meme erreur (lu comme document null).
+- STALWART_PUBLIC_URL reste honor au tag (urls de session annoncees
+  http://stalwart:8080/...) — la correction de la veille tient.
+- API de gestion : les methodes x: repondent identiquement, via
+  POST /jmap/ (session sur GET /jmap/session, les deux annoncés par la
+  redirection 307 de /.well-known/jmap). Les result-references (#c0)
+  ne sont pas supportees : passer les ids litteraux.
+- Schema compte (différences v0.16 vs v1.0) : name = partie locale
+  (alice, pas alice@lastarter.test) ; emailAddress est SERVER-SET meme a
+  la creation (derive de name + domainId, ne pas l envoyer) ; credentials
+  est une CARTE {"0": {"@type":"Password","secret":"..."}} (pas une
+  liste). Rôle admin du serveur : update x:Account/set avec
+  {"roles":{"@type":"Admin"}} (enum UserRolesType : User/Admin/Custom).
+- Au premier boot le serveur auto-provisionne : 7 listeners vivants
+  (smtp 25, submissions 465, imaps 993, pop3s 995, sieve 4190, http 8080,
+  https 443) + les boites standard par compte (INBOX incluse) — les
+  blocages de la veille (IMAP listener impossible, INBOX absente)
+  disparaissent avec le pairage d'ere.
+- Comptes recrees a l identique (meme domaine lastarter.test id=b,
+  memes secrets documentes) : admin@lastarter.test / dc6XhMYmm5AgAGUE
+  (rôle Admin), alice@lastarter.test / Alice-LaStarter-2026.
+  Correction : le User Settings Frappe d alice portait
+  alice-LaStarter-2026 (minuscule) — aligne sur Alice-LaStarter-2026.
+- Preuves : EHLO SMTP 250 depuis le backend ; frappe.sendmail →
+  Email Queue Sent (apres frappe.email.queue.flush) → INBOX JMAP d alice
+  total 1 ; get_user_info 200 ; get_enabled_domains 200
+  ["lastarter.test"] (le 417 isEnabled a disparu).
+- Login JMAP : avec l ADRESSE COMPLETE (alice@lastarter.test), le nom
+  court repond 401.
+- Le /api/schema (gzip) du tag decrit tous les objets x: — la reference
+  pour le fork suite. L image n embarque AUCUN config : elle attend le
+  fichier monte.
