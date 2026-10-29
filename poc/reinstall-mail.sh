@@ -32,7 +32,7 @@ echo "── 4. bench build --app mail (le bundle vue)"
 $DC exec -T backend bench build --app mail 2>&1 | tail -3
 
 echo "── 5. assets en fichiers réels dans le volume sites"
-$DC exec -T backend bash -c 'rm -rf ../sites/assets/mail && cp -rL apps/mail/frontend/dist ../sites/assets/mail && ls ../sites/assets/mail | head -3'
+$DC exec -T backend bash -c 'rm -rf /home/frappe/frappe-bench/sites/assets/mail && cp -rL /home/frappe/frappe-bench/apps/mail/mail/public /home/frappe/frappe-bench/sites/assets/mail && ls /home/frappe/frappe-bench/sites/assets/mail | head -3'
 
 echo "── 6. restart frontend"
 $DC restart frontend 2>&1 | tail -1

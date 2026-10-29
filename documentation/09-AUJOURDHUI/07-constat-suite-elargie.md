@@ -548,3 +548,31 @@ Non-regression verte : login 200, /docs 302, /all-products 200,
 id.localhost 200, get_enabled_domains ["lastarter.test"], donnees de demo
 intactes (1 espace raven, 3 leads, tickets), Stalwart v0.16.27 healthz 200.
 Sauvegardes pre-migration des deux sites effectuees.
+
+## LMS passe sur main a la demande de Bastien (29/10, midi)
+
+Bastien : « si il faut on mets tout a jour » des que la difference est
+visible (2.63.0 -> 2.68.0). Verification des faits avant d'executer :
+- lms @ main declare frappe = ">=15.121.0,<17.0.0" — notre v16.54 est
+  dedans ; main est la ligne des RELEASES (v2.68.0 = main head, publiee
+  le 28/10). Mon premier verdict (hold, « main = ligne v17 ») etait faux :
+  c'etait une inference, pas un fait.
+- Les branches ont DIVERGE : main a 597 commits d'avance, version-16
+  porte 136 commits non remontes (pin de la ligne, CI v16, + de vrais
+  fixs recents : banniere d'inscription, doublons de cours, count-
+  matching, image de profil). Caveat documente : ces fixs arriveront en
+  amont plus tard ; la CI v16 du LMS vit dans version-16, pas dans main
+  — la preuve de compatibilite reste empirique (migration + sondes).
+- patches.txt : main = 147 lignes, version-16 = 140 (7+ nouveaux patchs,
+  joues proprement au migrate).
+- Distinction verifiee pour la suite ERP : hrms, webshop et payments
+  n'ONT PAS de branche main (defaut = develop) — leur version-16 EST leur
+  ligne frappe v16, a son sommet. lms bouge, eux restent : deux topologies
+  differentes, pas deux standards.
+- Rein install app mail rejouee a l'identique (le script avait encore le
+  mauvais chemin d'assets — corrige : le bundle vit dans apps/mail/mail/
+  public, pas frontend/dist ; sed a echoue sur les caracteres speciaux,
+  corrige a la main).
+Resultat : lms 2.68.0 en service, migrations crm et id propres, donnees
+de demo intactes (cours, chapitre, lecon, raven, leads), /courses 301
+(redirection normale), tout le reste au vert.
