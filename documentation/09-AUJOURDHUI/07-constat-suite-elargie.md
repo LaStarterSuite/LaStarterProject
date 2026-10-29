@@ -337,3 +337,18 @@ l app existe mais n est pas publiee. Deux voies : demander le depot a
 The-Commit-Company, ou ecrire notre propre pont LMS->Raven dans
 lastarter_core (micro-projet : synchroniser les membres de batchs
 vers des canaux Raven par regle).
+
+## Frappe Mail rendu operationnel (29/10)
+
+La vraie cause de la page blanche de /mail : le frontend Vue de l app
+n avait jamais ete compile (install a chaud, sans bench build) ET ses
+assets n etaient pas dans la vue du conteneur frontal. Correctif :
+reinstallation depuis /tmp/mail-src (persistant dans le conteneur
+backend), bench build --app mail, copie reelle des assets dans le volume
+sites (le lien symbolique n est pas vu par le conteneur frontend), restart
+frontend. Verifie au navigateur : /mail/login rend le formulaire (titre
+Frappe Mail, 2 champs, Log In). Reste a câbler : le compte Stalwart
+alice@lastarter.test existe (JMAP login OK) — la liaison compte Frappe ->
+boite JMAP reste a explorer dans le code de l app (api/account.py).
+raven_integration : app non publiee (ni Frappe ni The-Commit-Company) —
+les hooks LMS sont prets pour un pont lastarter_core.
