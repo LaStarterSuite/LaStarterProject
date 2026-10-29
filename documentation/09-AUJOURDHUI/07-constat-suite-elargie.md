@@ -352,3 +352,19 @@ alice@lastarter.test existe (JMAP login OK) — la liaison compte Frappe ->
 boite JMAP reste a explorer dans le code de l app (api/account.py).
 raven_integration : app non publiee (ni Frappe ni The-Commit-Company) —
 les hooks LMS sont prets pour un pont lastarter_core.
+
+## Cause racine du client Mail non fonctionnel : les URLs JMAP annoncees (29/10)
+
+La session JMAP de Stalwart annonce ses URLs a partir du hostname pose au
+bootstrap : https://mail.lastarter.test/jmap/ (et download/upload/
+eventsource) — HTTPS + hostname non resolvable depuis le conteneur backend.
+L app Mail suit ces URLs pour TOUT (boites, identites, contacts, sieve) :
+d ou les ConnectionError en cascade dans l UI. Le login JMAP de
+alice@lastarter.test fonctionne (Core/echo 200) : l auth est bonne, seules
+les URLs annoncees bloquent. Voies de correction (prochaine session) :
+1. config Stalwart : hostname + listeners coherents (SMTP 25, JMAP/HTTP
+   8080, IMAP 143) pour que la session annonce http://stalwart:8080/... ;
+2. ou resolvabilite + TLS sur mail.lastarter.test (DNS interne + certificat).
+L etat livre ce soir : SMTP interne fonctionnel (Email Account + Email
+Queue Sent), JMAP auth OK, UI Mail servie (assets repares) — le rendu de
+la boite attend le point 1.
