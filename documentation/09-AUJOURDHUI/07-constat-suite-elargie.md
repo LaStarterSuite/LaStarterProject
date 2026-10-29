@@ -402,3 +402,19 @@ MySQLdb direct AVANT de conclure sur les erreurs ORM.
   créé en dernier ; en cas de doute, reinitialiser via x:Account/set
   update credentials (politique 8+ caracteres).
 - Email interne admin -> alice : Email Queue Sent (SMTP Stalwart).
+
+## Listener IMAP cree par API (29/10, fin — dernier etat)
+
+La creation de l ecouteur IMAP par x:NetworkListener/set est REUSSIE :
+la forme bind = objet map {"[::]:143": true} (pas un tableau !) + name +
+protocol imap + useTls false. Stalwart restart -> IMAP 143 vivant
+(CAPABILITY IMAP4rev2). Bloquant restant : LOGIN desactive sur le port
+clair (securite Stalwart par defaut) et STARTTLS echoue (aucun
+certificat genere par le bootstrap API). Pour activer l acces IMAP :
+1. generer un certificat (x:Certificate ou le wizard UI), ou
+2. autoriser le plain-text auth (reglage authentication Stalwart),
+puis provisionner les boites (INBOX etc.) — les comptes crees par API
+n ont pas leurs boites standard auto-creees.
+La livraison SMTP->Stalwart fonctionne des l acceptation (Email Queue
+Sent) ; la lecture se fait via JMAP (alice : login OK, boites vides
+tant que non provisionnees).
