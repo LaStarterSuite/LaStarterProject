@@ -245,6 +245,9 @@ services:
     environment:
       # Epingle l admin de recuperation : complete le bootstrap sans UI
       STALWART_RECOVERY_ADMIN: "admin:AbezsvFiQCp48FtL"
+      # URL publique annoncee dans la session JMAP (purement env, zero
+      # hardcode) : en prod, remplacer par https://mail.<domaine-client>
+      STALWART_PUBLIC_URL: "http://stalwart:8080"
     ports:
       # Admin + JMAP : http://localhost:8081 — IMAP 143/993 — SMTP 25
       - "8081:8080"
