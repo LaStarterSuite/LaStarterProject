@@ -37,7 +37,7 @@ def head_commit(slug, branch):
         with urllib.request.urlopen("https://api.github.com/repos/frappe/" + slug + "/commits/" + branch, timeout=15) as r:
             return json.load(r)["sha"]
     except Exception:
-        return "0000000000000000000000000000000000000000"
+        raise RuntimeError("GitHub API injoignable pour " + slug + "@" + branch + " : reprendre plus tard plutot que creer une release au hash bidon")
 
 n_app = n_src = n_rel = n_mp = 0
 for spec in APPS:
@@ -58,6 +58,9 @@ for spec in APPS:
         rel_name = rel.name
         n_rel += 1
     mp_name = frappe.db.get_value("Marketplace App", {"app": slug})
+    # Instance privee sans infra d'audit auto-hebergee : releases de repos
+    # frappe/* approuvees a la main. bypass_automated_audit / frappe_approved
+    # marquent ce choix conscient (documente dans le guide press, section 8).
     if not mp_name:
         frappe.get_doc({"doctype": "Marketplace App", "app": slug, "title": spec["title"], "description": spec["description"], "image": spec["image"], "status": "Published", "published": 1, "published_on": frappe.utils.today(), "show_for_site_creation": 1, "frappe_approved": 1, "bypass_automated_audit": 1, "team": TEAM, "subscription_type": "Free", "sources": [{"version": "Version 15", "source": src_name}, {"version": "Version 16", "source": src_name}]}).insert(ignore_permissions=True)
         n_mp += 1
@@ -66,7 +69,9 @@ n_pt = 0
 if not frappe.db.exists("Site Plan", TRIAL_PLAN):
     frappe.get_doc({"doctype": "Site Plan", "name": TRIAL_PLAN, "plan_title": TRIAL_PLAN, "enabled": 1, "document_type": "Site", "interval": "Monthly", "price_inr": 600, "price_usd": 6.5, "is_trial_plan": 1}).insert(ignore_permissions=True)
     n_pt += 1
-if not frappe.db.get_value("Site Plan", TRIAL_PLAN, "is_trial_plan"):
+# Reparation d'un plan cree par une run precedente du script (qui pose
+# toujours plan_title) : on ne bascule jamais le flag sur un plan etranger.
+if not frappe.db.get_value("Site Plan", TRIAL_PLAN, "is_trial_plan") and frappe.db.get_value("Site Plan", TRIAL_PLAN, "plan_title") == TRIAL_PLAN:
     frappe.db.set_value("Site Plan", TRIAL_PLAN, "is_trial_plan", 1)
 if not frappe.db.exists("Root Domain", ROOT_DOMAIN):
     frappe.get_doc({"doctype": "Root Domain", "name": ROOT_DOMAIN, "enabled": 1, "dns_provider": "Generic", "default_cluster": "Default", "team": TEAM}).insert(ignore_permissions=True)
@@ -87,7 +92,7 @@ for spec in APPS:
     slug = spec["slug"]
     src_name = frappe.db.get_value("App Source", {"app": slug, "branch": spec["branch"], "team": TEAM})
     group_title = spec["title"] + " Trial"
-    group = frappe.db.get_value("Release Group", {"title": group_title})
+    group = frappe.db.get_value("Release Group", {"title": group_title, "team": TEAM})
     if not group:
         g = frappe.get_doc({"doctype": "Release Group", "title": group_title, "team": TEAM, "version": "Version 15", "enabled": 1, "public": 0, "apps": [{"source": frappe_src, "app": "frappe", "title": "Frappe Framework"}, {"source": src_name, "app": slug, "title": spec["title"]}]})
         g.insert(ignore_permissions=True)
