@@ -160,3 +160,38 @@ aboutit quand même). Vérification côté client :
 printf 'import press.api.marketplace as m\nfrappe.set_user("grand.client@wardhive.app")\nprint(len(m.get_marketplace_apps_for_onboarding()))\n' | \
   ssh ubuntu@SERVEUR "cd ~/press-bench && bench --site press.wardhive.app console" | grep -E '^[0-9]'
 ```
+
+### La machinerie trial (le suffixe du sous-domaine)
+
+L'ecran « Let's set up your site » charge le document **Product Trial**
+nomme comme la Marketplace App (le `:productId` de l'URL), puis appelle
+`press.api.product_trial.get_request` qui renvoie le `domain` du
+document (un lien vers **Root Domain**). Sans ces documents, l'ecran
+n'affiche qu'un point sans suffixe et `get_request` n'est jamais
+appele : la ressource frontend a `auto: !!saasProduct`, donc tant que
+le document Product Trial n'existe pas, rien ne se declenche.
+
+Le script catalogue seme aussi : Root Domain (apps.wardhive.app,
+`dns_provider` Generic, `default_cluster` Default), Press
+Settings.domain, le Site Plan « Standard LaStarter » (`document_type`
+Site, `price_inr` et `price_usd` obligatoires, **`is_trial_plan`=1
+sinon le Product Trial refuse : « Selected plan is not a trial
+plan »**), un Release Group par produit (team, version, apps enfant
+avec la source frappe version-15 — `release_group` et `email_subject`
+sont obligatoires sur Product Trial) et le patch Cluster (`public`=1,
+`status` Active, `cloud_provider` Generic, sinon les clusters
+disponibles ne remontent pas dans les flux clients).
+
+Trois gardes a connaitre : la validation de publication d'une
+Marketplace App exige une App Release `Approved` ; `create_site`
+valide le sous-domaine (5 a 32 caracteres, regex stricte) contre les
+Root Domain `enabled` ; le deploiement final du site demande l'infra
+managee (Server + DatabaseServer + ProxyServer + agent frappe/agent +
+Docker + nginx press) — voir la section 4. Sans elle, la demande
+reste en « Wait for Site » puis passe en erreur.
+
+Test E2E Playwright du parcours client (login, selecteur d'apps,
+suffixe, marketplace) : `tests/press-e2e/test_client_flow.py`,
+a executer sur le serveur avec l'env du bench press
+(`env/bin/playwright install chromium` une fois, puis le script avec
+PRESS_EMAIL/PRESS_PASSWORD en variables d'environnement).
