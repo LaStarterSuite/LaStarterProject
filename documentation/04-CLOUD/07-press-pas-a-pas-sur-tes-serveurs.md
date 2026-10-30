@@ -119,3 +119,44 @@ pertinent quand on veut : le self-service client, le billing automatisé,
 les déploiements en un clic, la montée en densité (plusieurs sites par
 bench). Les deux coexistent : lastarter pour les premiers clients,
 press pour l'industrialisation.
+
+## 8. Le catalogue marketplace (le sélecteur d'apps)
+
+La page « Select an app to get started » du dashboard client liste le
+doctype **Marketplace App** (filtres `status = Published` et
+`show_for_site_creation = 1`) — PAS les doctypes App / App Source des
+Release Groups. Les deux chaînes sont distinctes :
+
+```
+App (slug, public) ── App Source (branche, public, versions 15/16)
+                          └── App Release (status Approved) ──┐
+Marketplace App (Published, show_for_site_creation, sources) ─┘
+```
+
+Le validateur de publication exige au moins une App Release avec
+status Approved sur une source de l'app : c'est aussi ce que produit
+leur auto-approbation (`App Release.before_save` approuve tout ce qui
+est listé dans Marketplace Settings).
+
+Le script `poc/press-marketplace-catalog.py` reconstruit tout le
+catalogue (7 apps : CRM, Helpdesk, Raven, LMS, ERPNext, HR, Webshop)
+de façon idempotente :
+
+```bash
+scp poc/press-marketplace-catalog.py ubuntu@SERVEUR:/home/ubuntu/
+ssh ubuntu@SERVEUR "cd ~/press-bench && \
+  bench --site press.wardhive.app console < ~/press-marketplace-catalog.py"
+```
+
+Pièges constatés : les lignes enfants (versions, sources) passent par
+le constructeur `frappe.get_doc({...})` — l'affectation d'un attribut
+avec une liste de dictionnaires casse ; `bench execute frappe.get_all`
+n'imprime RIEN pour une liste vide (silence = zéro ligne) ; l'insert
+d'un Marketplace App déclenche un fetch du README GitHub qui peut
+jeter un `KeyError: 'content'` cosmétique sous rate-limit (l'insert
+aboutit quand même). Vérification côté client :
+
+```bash
+printf 'import press.api.marketplace as m\nfrappe.set_user("grand.client@wardhive.app")\nprint(len(m.get_marketplace_apps_for_onboarding()))\n' | \
+  ssh ubuntu@SERVEUR "cd ~/press-bench && bench --site press.wardhive.app console" | grep -E '^[0-9]'
+```
