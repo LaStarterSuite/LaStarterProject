@@ -99,8 +99,10 @@ for spec in APPS:
         group = g.name
         n_pt += 1
     if not frappe.db.exists("Product Trial", slug):
-        frappe.get_doc({"doctype": "Product Trial", "name": slug, "title": spec["title"], "published": 1, "domain": ROOT_DOMAIN, "apps": [{"app": slug}], "trial_plan": TRIAL_PLAN, "trial_days": 14, "release_group": group, "email_subject": "Votre code de verification LaStarter"}).insert(ignore_permissions=True)
+        frappe.get_doc({"doctype": "Product Trial", "name": slug, "title": spec["title"], "published": 1, "domain": ROOT_DOMAIN, "apps": [{"app": slug}], "trial_plan": TRIAL_PLAN, "trial_days": 14, "release_group": group, "email_subject": "Votre code de verification LaStarter", "logo": spec["image"]}).insert(ignore_permissions=True)
         n_pt += 1
+    elif not frappe.db.get_value("Product Trial", slug, "logo"):
+        frappe.db.set_value("Product Trial", slug, "logo", spec["image"])
 
 frappe.db.commit()
 print("CREATED apps:", n_app, "sources:", n_src, "releases:", n_rel, "marketplace:", n_mp, "trials+root:", n_pt)

@@ -195,3 +195,30 @@ suffixe, marketplace) : `tests/press-e2e/test_client_flow.py`,
 a executer sur le serveur avec l'env du bench press
 (`env/bin/playwright install chromium` une fois, puis le script avec
 PRESS_EMAIL/PRESS_PASSWORD en variables d'environnement).
+
+### Les roles du compte client et l'etape GitHub
+
+Un utilisateur de team cree EN BRUT (hors de leur flux d'inscription)
+n'a AUCUN role frappe et reste Website User : les appels qui passent
+par les permissions standard du framework (le `run_doc_method` du
+coeur sur Product Trial Request, les listes de versions) le rejettent
+avec « Pas permis », et cote panneau ca donne l'erreur de role puis
+des boucles de fetch. Reparation par LEUR mecanisme :
+`Team.create_user_for_member` (ajoute le membre a la team) puis
+`user.append_roles(("Press User",))` et `user_type` System User —
+exactement ce que leur `Team.create_user` fait a l'inscription.
+
+Apres reparation, le clic « Create site » depasse la permission et
+s'arrete proprement sur la vraie frontiere :
+« No active proxy servers found for domain apps.wardhive.app » —
+l'infra managee (agent + nginx press + serveurs documentes) reste la
+derniere brique avant le deploiement reel.
+
+La carte onboarding « Connect your GitHub » de l'Admin UI Pilot n'est
+PAS requise : les apps publiques s'installent sans token. Elle se
+retire par leur propre API, sans code :
+`PATCH /api/v1/settings` avec `{"bench": {"onboarding": "dismissed"}}`.
+
+L'icone au-dessus de « Let's set up your site » est le champ `logo`
+du document Product Trial : sans lui, image cassee. Le script
+catalogue le renseigne avec le meme visuel que la fiche marketplace.
