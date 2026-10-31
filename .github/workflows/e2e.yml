@@ -1,0 +1,42 @@
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  press-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PRESS_BASE: ${{ vars.PRESS_BASE || 'https://press.wardhive.app' }}
+      PRESS_EMAIL: ${{ secrets.PRESS_EMAIL }}
+      PRESS_PASSWORD: ${{ secrets.PRESS_PASSWORD }}
+      MERGIFY_TOKEN: ${{ secrets.MERGIFY_TOKEN }}
+      PRESS_SHOTS: ${{ github.workspace }}/shots
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run press client e2e
+        run: pytest tests/press-e2e -v
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: press-e2e-screenshots
+          path: shots/
