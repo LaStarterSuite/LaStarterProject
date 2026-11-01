@@ -72,6 +72,11 @@ with sync_playwright() as p:
 
     # 4. Suffixe de sous-domaine : saisir "jeand" -> "jeand.apps.wardhive.app"
     try:
+        # Reload : la ressource setup charge le Product Trial au montage ; si la
+        # page a ete montee avant la creation du document, le reload force le
+        # rechargement avec les donnees a jour.
+        page.reload(wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(2000)
         page.wait_for_selector("#subdomain", timeout=20000)
         page.fill("#subdomain", "jeand", timeout=10000)
         page.wait_for_selector("text=apps.wardhive.app", timeout=15000)
